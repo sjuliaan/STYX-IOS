@@ -39,6 +39,15 @@
 #import "StyxAnogs.h"
 #import "AnogsOffsets.h"
 
+// The iOS SDK hides the task_info typedefs behind __DARWIN_C_LEVEL guards that
+// <mach/task_info.h> does not always satisfy from ObjC++. Rather than fight the
+// header guards, declare the two typedefs the prototype needs. These are the
+// exact kernel types and are ABI-identical to what task_info expects.
+typedef natural_t   styx_task_t;
+typedef integer_t    styx_flavor_t;
+typedef natural_t   *styx_flavor_out_t;
+typedef mach_msg_type_number_t styx_msg_count_t;
+
 StyxAnogsStats StyxAnogs;
 
 // ---------------------------------------------------------------------------
@@ -88,8 +97,8 @@ static int  (*s_orig_statfs)(const char *, struct statfs *)    = NULL;
 static char *(*s_orig_getenv)(const char *)                    = NULL;
 static int  (*s_orig_sysctl)(int, void *, size_t *, void *, size_t) = NULL;
 static int  (*s_orig_sysctlbyname)(const char *, void *, size_t *, void *, size_t) = NULL;
-static int  (*s_orig_task_info)(mach_task_self_t, task_flavor_t, flavor_t,
-                                mach_msg_type_number_t *, void *, mach_msg_type_number_t *) = NULL;
+static int  (*s_orig_task_info)(styx_task_t, styx_flavor_t, styx_flavor_out_t,
+                                styx_msg_count_t *, void *, styx_msg_count_t *) = NULL;
 static int  (*s_orig_dlopen)(const char *, int)                = NULL;
 static void *(*s_orig_dlsym)(void *, const char *)              = NULL;
 
@@ -105,8 +114,8 @@ static void StyxResolveOriginals(void) {
     s_orig_getenv      = (char *(*)(const char *))dlsym(RTLD_DEFAULT, "getenv");
     s_orig_sysctl      = (int (*)(int, void *, size_t *, void *, size_t))dlsym(RTLD_DEFAULT, "sysctl");
     s_orig_sysctlbyname= (int (*)(const char *, void *, size_t *, void *, size_t))dlsym(RTLD_DEFAULT, "sysctlbyname");
-    s_orig_task_info   = (int (*)(mach_task_self_t, task_flavor_t, flavor_t,
-                                  mach_msg_type_number_t *, void *, mach_msg_type_number_t *))
+    s_orig_task_info   = (int (*)(styx_task_t, styx_flavor_t, styx_flavor_out_t,
+                                  styx_msg_count_t *, void *, styx_msg_count_t *))
                          dlsym(RTLD_DEFAULT, "task_info");
     s_orig_dlopen      = (int (*)(const char *, int))dlsym(RTLD_DEFAULT, "dlopen");
     s_orig_dlsym       = (void *(*)(void *, const char *))dlsym(RTLD_DEFAULT, "dlsym");
@@ -274,9 +283,9 @@ static int Styx_sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
 // It only ever tests that this is >= 1, i.e. "is dyld info available at all".
 // We report a plausible constant so the check passes without exposing the real
 // image enumeration.
-static int Styx_task_info(mach_task_self_t target, task_flavor_t flavor,
-                          flavor_t *out, mach_msg_type_number_t *cnt,
-                          void *buf, mach_msg_type_number_t bufsz) {
+static int Styx_task_info(styx_task_t target, styx_flavor_t flavor,
+                          styx_flavor_out_t out, styx_msg_count_t *cnt,
+                          void *buf, styx_msg_count_t bufsz) {
     int rc = s_orig_task_info ? s_orig_task_info(target, flavor, out, cnt, buf, bufsz) : -1;
     if (StyxCfg.anogsBypassOn && rc == 0 && buf) {
         if (flavor == 0x13 /*TASK_DYLD_INFO*/) {
