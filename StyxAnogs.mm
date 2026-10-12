@@ -114,23 +114,6 @@ static inline BOOL StyxPlausiblePtr(const void *p) {
     return v >= STYX_INTERPOSE_MIN && v <= STYX_INTERPOSE_MAX;
 }
 
-static BOOL StyxPathIsSensitive(const char *path) {
-    if (!StyxPlausiblePtr(path)) return NO;
-    static const char *needles[] = {
-        "/Library/MobileSubstrate",
-        "/usr/lib/TweakInject",
-        "/var/jb/", "/var/stash", "/private/var/jb",
-        "libjailbreak.dylib", "roothidepatch.dylib",
-        "/bin/linker",
-        // our own injected payload
-        "Cloud.framework/Cloud",
-        NULL
-    };
-    for (int i = 0; needles[i]; i++)
-        if (strstr(path, needles[i])) return YES;
-    return NO;
-}
-
 static BOOL StyxImageIsSensitive(const char *name) {
     if (!StyxPlausiblePtr(name)) return NO;
     static const char *needles[] = {
