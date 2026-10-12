@@ -16,6 +16,7 @@
 #pragma once
 #import <mach/mach.h>
 #import <sys/mman.h>
+#import <libkern/OSCacheControl.h>
 #import <stdint.h>
 #import <string.h>
 
@@ -27,7 +28,11 @@ static inline int StyxProtectRWX(uintptr_t addr, size_t size) {
 }
 
 static inline void StyxFlushICache(uintptr_t addr, size_t size) {
-    __builtin___clear_cache((char *)addr, (char *)(addr + size));
+    // NOTE: do not use __builtin___clear_cache here. It lowers to a call to the
+    // __clear_cache libcall, which modern iOS SDKs do not export; it only exists
+    // as a static inline in <libkern/OSCacheControl.h>, so the link fails with
+    // "Undefined symbols: ___clear_cache" unless that header is imported.
+    __clear_cache((void *)addr, (void *)(addr + size));
 }
 
 // Returns a fresh RWX trampoline with `size` bytes copied from target,
