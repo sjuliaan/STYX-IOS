@@ -43,18 +43,25 @@
 // written with plain builtin types on purpose: referring to the kernel
 // typedef names (natural_t, mach_msg_type_number_t, ...) reintroduces the very
 // guards we are avoiding. ABI is identical -- natural_t/integer_t are both
-// unsigned int, and task_info is declared with these exact widths:
+// unsigned int.
 //
-//   int task_info(mach_task_self_t target,
-//                 task_flavor_t          flavor,
-//                 flavor_t              *out,
-//                 mach_msg_type_number_t *count,
-//                 void                  *info,
-//                 mach_msg_type_number_t  count_size);
+// Verified against anogs' own call site (sub_7230 @ 0x7778):
+//
+//     MOV  W0, <mach_task_self()>      ; target_task
+//     MOV  W1, #0x13                   ; flavor = TASK_DYLD_INFO
+//     ADD  X2, SP, #task_info_out      ; out
+//     SUB  X3, X29, #task_info_outCnt  ; count   (pre-set to 0x10)
+//     BL   _task_info
+//
+// Only X0-X3 are set; X4/X5 are never initialised. The prototype therefore
+// matches the 4-argument form anogs actually uses.
 typedef unsigned int  styx_task_t;
 typedef unsigned int  styx_flavor_t;
 typedef unsigned int *styx_flavor_out_t;
 typedef unsigned int  styx_msg_count_t;
+
+typedef int  (*task_info_fn)(styx_task_t, styx_flavor_t, styx_flavor_out_t,
+                             styx_msg_count_t *);
 
 StyxAnogsStats StyxAnogs;
 
@@ -105,8 +112,7 @@ static int  (*s_orig_statfs)(const char *, struct statfs *)    = NULL;
 static char *(*s_orig_getenv)(const char *)                    = NULL;
 static int  (*s_orig_sysctl)(int, void *, size_t *, void *, size_t) = NULL;
 static int  (*s_orig_sysctlbyname)(const char *, void *, size_t *, void *, size_t) = NULL;
-static int  (*s_orig_task_info)(styx_task_t, styx_flavor_t, styx_flavor_out_t,
-                                styx_msg_count_t *, void *, styx_msg_count_t *) = NULL;
+static task_info_fn s_orig_task_info = NULL;
 static void *(*s_orig_dlopen)(const char *, int)                = NULL;
 static void *(*s_orig_dlsym)(void *, const char *)              = NULL;
 
@@ -122,9 +128,7 @@ static void StyxResolveOriginals(void) {
     s_orig_getenv      = (char *(*)(const char *))dlsym(RTLD_DEFAULT, "getenv");
     s_orig_sysctl      = (int (*)(int, void *, size_t *, void *, size_t))dlsym(RTLD_DEFAULT, "sysctl");
     s_orig_sysctlbyname= (int (*)(const char *, void *, size_t *, void *, size_t))dlsym(RTLD_DEFAULT, "sysctlbyname");
-    s_orig_task_info   = (int (*)(styx_task_t, styx_flavor_t, styx_flavor_out_t,
-                                  styx_msg_count_t *, void *, styx_msg_count_t *))
-                         dlsym(RTLD_DEFAULT, "task_info");
+    s_orig_task_info   = (task_info_fn)dlsym(RTLD_DEFAULT, "task_info");
     s_orig_dlopen      = (void *(*)(const char *, int))dlsym(RTLD_DEFAULT, "dlopen");
     s_orig_dlsym       = (void *(*)(void *, const char *))dlsym(RTLD_DEFAULT, "dlsym");
 }
@@ -278,31 +282,15 @@ static int Styx_sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
 }
 
 // task_info is used by the root/jailbreak detector (sub_7230) with flavor
-// TASK_DYLD_INFO (0x13), whose struct is:
-//
-//   struct task_dyld_info {
-//     mach_vm_size_t all_image_info_size;   // +0x00
-//     integer_t      all_image_info_format; // +0x08
-//     mach_vm_size_t dyld_all_image_info_addr;
-//     mach_vm_size_t dyld_all_image_info_size;
-//     integer_t      dyld_all_image_info_format;
-//   };
-//
-// It only ever tests that this is >= 1, i.e. "is dyld info available at all".
-// We report a plausible constant so the check passes without exposing the real
-// image enumeration.
+// TASK_DYLD_INFO (0x13). anogs only checks that the returned format field is
+// >= 1, i.e. "is dyld info available at all" -- it does not walk the image
+// array here. Report a plausible non-zero format so the check passes.
 static int Styx_task_info(styx_task_t target, styx_flavor_t flavor,
-                          styx_flavor_out_t out, styx_msg_count_t *cnt,
-                          void *buf, styx_msg_count_t bufsz) {
-    int rc = s_orig_task_info ? s_orig_task_info(target, flavor, out, cnt, buf, bufsz) : -1;
-    if (StyxCfg.anogsBypassOn && rc == 0 && buf) {
-        if (flavor == 0x13 /*TASK_DYLD_INFO*/) {
-            // Force a non-zero "all_image_info_size" without changing anything
-            // anogs actually branches on.
-            uint32_t *fmt = (uint32_t *)((char *)buf + 0x08);
-            if (fmt && *fmt == 0) *fmt = 1;
-            StyxAnogs.neuteredSysctl++;
-        }
+                          styx_flavor_out_t out, styx_msg_count_t *cnt) {
+    int rc = s_orig_task_info ? s_orig_task_info(target, flavor, out, cnt) : -1;
+    if (StyxCfg.anogsBypassOn && rc == 0 && out && *out == 0) {
+        *out = 1;
+        StyxAnogs.neuteredSysctl++;
     }
     return rc;
 }
