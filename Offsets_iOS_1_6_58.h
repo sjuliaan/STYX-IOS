@@ -82,32 +82,60 @@ inline uintptr_t StyxiOSBase() {
 #define IOS_Unlock__IsWeaponAttachmentUnlock 0x1F6EE2C // [VERIFY] WeaponPromotionAgent — confirm semantics
 
 // ---------------------------------------------------------------------------
-// Fields — proof levels: [OK] = disasm-proven or real dump offset;
-// [CARRY] = order-identical carry-over from Android 1.6.57 (IDA-optional).
-// Disasm proofs: NickName ldr #0x160 (via 0x26E5AA8); IsAlive ldrb #0x548
-// (0x1873020); IsBot ldrb #0x5B9; HeadBone ldr #0x308 x3; PlayerInfo ldr
-// #0x5C0 x2; AttackableInfo ldr #0x78 x2; EnemyPawns ldr #0x178 x2;
-// LastPawnPos inline Vector3 at Pawn+0x5C8 (leaf, no hook needed).
+// Fields
+//
+// CONFIRMED (checked 2026-10-12 against dump.cs, scoped to the owning class):
+//   Pawn.m_HeadBone 0x308, m_IsAlive 0x548, m_IsBot 0x5B9, m_PlayerInfo 0x5C0,
+//   m_Mesh 0x628, m_LastPawnPos 0x5C8; BaseGame.EnemyPawns 0x178;
+//   AttackableTarget.m_AttackableInfo 0x78 (embedded struct, NOT a pointer);
+//   AttackableTargetInfo.m_Health 0x34 / m_MaxHealth 0x38.
+//   -> Pawn health therefore reads from Pawn+0xAC and Pawn+0xB0.
+//
+// A previous revision of this file claimed "disasm proofs" for these
+// (e.g. "NickName ldr #0x160 via 0x26E5AA8", "IsAlive ldrb #0x548 via
+// 0x1873020"). Those claims were checked and are FALSE: 0x26E5AA8 is
+// 0xA94167FA (LDP X26,X30,[SP],#0x50, a function epilogue) and 0x1873020 is
+// 0xAA1503E1 (ORR X3,X1,X3). The paragraph has been removed. Do not add
+// verification claims here without re-checking them against the binary.
 // ---------------------------------------------------------------------------
-#define IOS_Pawn__m_HeadBone              0x308   // [OK]
-#define IOS_Pawn__m_IsAlive               0x548   // [OK]
-#define IOS_Pawn__m_IsBot                 0x5B9   // [OK]
-#define IOS_Pawn__m_PlayerInfo            0x5C0   // [OK]
-#define IOS_Pawn__m_Mesh                  0x628   // [OK] real iOS dump offset
-#define IOS_Pawn__m_LastPawnPosDirect     0x5C8   // [OK] inline Vector3 (S0-S2), hook-free
-#define IOS_Pawn__get_IsAlive             0x1873020 // [OK] bool leaf (hook-free alive check)
-#define IOS_PlayerInfo__m_NickName        0x160   // [OK]
-#define IOS_PlayerInfo__m_ProfessionChipID   0x1E8   // [CARRY]
-#define IOS_PlayerInfo__m_PreProfessionChipID 0xC4   // [CARRY]
-#define IOS_PlayerInfo__m_ChipSkinID      0x3F0   // [CARRY]
-#define IOS_BRProfessionChipConfig__m_ItemID 0x24 // [CARRY]
-#define IOS_AttackableTarget__m_AttackableInfo 0x78  // [OK]
-#define IOS_AttackableTargetInfo__m_Health     0x34  // [CARRY]
-#define IOS_AttackableTargetInfo__m_MaxHealth  0x38  // [CARRY]
-#define IOS_BaseGame__EnemyPawns          0x178   // [OK]
-#define IOS_BaseGame__m_AllVehicles       0x1A0   // [CARRY]
-#define IOS_PhysicsVehicle__vehicleType   0x164   // [CARRY] layout not order-checked
-#define IOS_WeaponProjectile__m_TargetPos 0xF4    // [OK] real iOS offset (m_TartgetPosition sic)
-#define IOS_WeaponProjectile__m_SourcePos 0x100   // [OK] real iOS offset
-// Skeleton bone-map chain (Pawn+0xA8 ...) — [VERIFY] iOS Pawn bone layout in IDA
-// (CLOUD 1.6.57 mod may reveal equivalents; compare during IDA pass)
+#define IOS_Pawn__m_HeadBone              0x308   // [CONFIRMED]
+#define IOS_Pawn__m_IsAlive               0x548   // [CONFIRMED]
+#define IOS_Pawn__m_IsBot                 0x5B9   // [CONFIRMED]
+#define IOS_Pawn__m_PlayerInfo            0x5C0   // [CONFIRMED]
+#define IOS_Pawn__m_Mesh                  0x628   // [CONFIRMED]
+#define IOS_Pawn__m_LastPawnPos           0x5C8   // [CONFIRMED] inline Vector3
+// PlayerInfo.m_NickName: REMOVED. Dump reports 0x7FFFFFFF (unresolved) and no
+// such field exists on PlayerInfo or AttackableTargetInfo. ESP draws no names.
+// #define IOS_PlayerInfo__m_NickName     0x160   // [BOGUS - do not re-add]
+// #define IOS_Pawn__get_IsAlive          0x1873020 // [BOGUS] 0x1873020 is
+//   0xAA1503E1 (ORR X3,X1,X3), NOT the claimed LDRB. Previously tagged [OK].
+//   Re-derive from the dump before using; we read m_IsAlive directly instead.
+#define IOS_AttackableTarget__m_AttackableInfo 0x78  // [CONFIRMED] embedded struct
+#define IOS_AttackableTargetInfo__m_Health     0x34  // [CONFIRMED] -> Pawn+0xAC
+#define IOS_AttackableTargetInfo__m_MaxHealth  0x38  // [CONFIRMED] -> Pawn+0xB0
+#define IOS_BaseGame__EnemyPawns          0x178   // [CONFIRMED]
+// ---------------------------------------------------------------------------
+// UNUSED / UNVERIFIED — parked here on purpose.
+//
+// [CARRY] values were carried from the Android 1.6.57 dump on the assumption
+// that field declaration order is identical between the two platforms. The
+// header previously claimed that order was "validated" (Pawn 1314/1314 fields,
+// PlayerInfo 316/316, BaseGame 109/109, AttackableTarget 22/22, ATInfo 17/17).
+// Matching field COUNTS does not prove matching OFFSETS — a single field
+// inserted earlier shifts everything after it. None of these have been checked
+// against the iOS 1.6.58 dump, so they are commented out to make it impossible
+// to use one by accident. Uncomment only after confirming each against dump.cs
+// scoped to its own class. They are kept for possible future features.
+// ---------------------------------------------------------------------------
+/*
+#define IOS_PlayerInfo__m_ProfessionChipID   0x1E8   // [CARRY] unverified
+#define IOS_PlayerInfo__m_PreProfessionChipID 0xC4   // [CARRY] unverified
+#define IOS_PlayerInfo__m_ChipSkinID          0x3F0  // [CARRY] unverified
+#define IOS_BRProfessionChipConfig__m_ItemID 0x24   // [CARRY] unverified
+#define IOS_BaseGame__m_AllVehicles          0x1A0  // [CARRY] unverified
+#define IOS_PhysicsVehicle__vehicleType      0x164  // [CARRY] unverified
+*/
+#define IOS_WeaponProjectile__m_TargetPos 0xF4    // [CONFIRMED] m_TartgetPosition (sic)
+#define IOS_WeaponProjectile__m_SourcePos 0x100   // [CONFIRMED] m_SourcePosition
+// Skeleton bone-map chain (Pawn+0xA8 ...) — iOS Pawn bone layout not yet mapped.
+// (CLOUD 1.6.57 mod may reveal equivalents; compare during an IDA pass)

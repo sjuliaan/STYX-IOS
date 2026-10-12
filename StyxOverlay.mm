@@ -1,7 +1,12 @@
 // ============================================================================
 // STYX-iOS — ESP overlay renderer
-// Reads game memory via the verified iOS offset table and draws boxes, names,
+// Reads game memory via the verified iOS offset table and draws boxes,
 // distances and health bars into a single full-screen overlay UIView.
+//
+// Names are intentionally not drawn: PlayerInfo.m_NickName could not be
+// resolved from the 1.6.58 dump (il2cpp reports the sentinel 0x7FFFFFFF),
+// so reading it would produce garbage. Bots vs players are distinguished by
+// box colour instead (green = bot, red = player).
 // ============================================================================
 #import <UIKit/UIKit.h>
 #import "StyxConfig.h"
@@ -26,17 +31,9 @@ static inline BOOL StyxPtrOK(uintptr_t p) {
     return p > 0x1000 && p < 0x7FFFFFFFFFFFULL;
 }
 
-// Player name from PlayerInfo -> String. Returns NULL if anything is off.
-static NSString *StyxReadPlayerName(uintptr_t pawn) {
-    uintptr_t pi = *(uintptr_t *)(pawn + IOS_Pawn__m_PlayerInfo);
-    if (!StyxPtrOK(pi)) return NULL;
-    uintptr_t str = *(uintptr_t *)(pi + IOS_PlayerInfo__m_NickName);
-    if (!StyxPtrOK(str)) return NULL;
-    int32_t len = *(int32_t *)(str + IL2CPP_STRING_LEN_OFF);
-    if (len <= 0 || len > 64) return nil;
-    const uint16_t *chars = (const uint16_t *)(str + IL2CPP_STRING_CHARS_OFF);
-    return [[NSString alloc] initWithCharacters:chars length:(NSUInteger)len];
-}
+// NOTE: player names were removed. PlayerInfo.m_NickName is not resolvable
+// from the 1.6.58 dump (il2cpp emits the sentinel 0x7FFFFFFF for it), so any
+// read of that field yields garbage rather than a name.
 
 typedef struct {
     BOOL valid;
@@ -48,7 +45,7 @@ typedef struct {
     BOOL   visible;
 } StyxEntity;
 
-static void StyxEntityFromPawn(uintptr_t pawn, CGPoint *headOut, CGPoint *rootOut,
+static void StyxEntityFromPawn(uintptr_t pawn, void *cam, CGPoint *headOut, CGPoint *rootOut,
                                float *hpOut, float *maxHpOut,
                                BOOL *botOut, BOOL *aliveOut, BOOL *visOut) {
     StyxEntity e = {0};
@@ -63,8 +60,8 @@ static void StyxEntityFromPawn(uintptr_t pawn, CGPoint *headOut, CGPoint *rootOu
     Styxi_Vector3 rw = fnGetPos((void *)rootT);
     if (wh.z == 0 && rw.z == 0) { *visOut = NO; return; }
 
-    Styxi_Vector3 hsc = fnW2S(fnCameraMain(), wh, NO);
-    Styxi_Vector3 rsc = fnW2S(fnCameraMain(), rw, NO);
+    Styxi_Vector3 hsc = fnW2S(cam, wh, NO);
+    Styxi_Vector3 rsc = fnW2S(cam, rw, NO);
     if (hsc.z <= 0.0f || rsc.z <= 0.0f) { *visOut = NO; return; }
 
     e.valid = YES; e.alive = alive;
@@ -139,12 +136,18 @@ static void StyxInitFnPointers(void) {
     uintptr_t *arr = (uintptr_t *)(items + IL2CPP_ARRAY_DATA_OFF);
     CGFloat sw = [UIScreen mainScreen].bounds.size.width;
 
+    // Resolve the camera ONCE per frame. This used to be called twice per
+    // entity inside the loop, i.e. ~40 cross-language calls per frame at 10
+    // enemies, for a value that is constant across the whole frame.
+    void *cam = fnCameraMain();
+    if (!StyxPtrOK((uintptr_t)cam)) return;
+
     for (int i = 0; i < size; i++) {
         uintptr_t pawn = arr[i];
         if (!StyxPtrOK(pawn)) continue;
 
         CGPoint head, root; float hp, mx; BOOL bot, alive, vis;
-        StyxEntityFromPawn(pawn, &head, &root, &hp, &mx, &bot, &alive, &vis);
+        StyxEntityFromPawn(pawn, cam, &head, &root, &hp, &mx, &bot, &alive, &vis);
         if (!vis || !alive) continue;
         if (head.x < -50 || head.x > sw + 50) continue;
 
@@ -170,21 +173,15 @@ static void StyxInitFnPointers(void) {
             CGContextSetFillColorWithColor(ctx, (pct > 0.5f ? [UIColor greenColor] : (pct > 0.25f ? [UIColor orangeColor] : [UIColor redColor])).CGColor);
             CGContextFillRect(ctx, CGRectMake(box.origin.x - 5, box.origin.y + boxH * (1 - pct), 3, boxH * pct));
         }
-        if (StyxCfg.espName || StyxCfg.espDistance) {
-            NSString *name = StyxReadPlayerName(pawn);
-            if (StyxCfg.espDistance) {
-                void *lp = fnLocalPawn();
-                if (StyxPtrOK((uintptr_t)lp)) {
-                    Styxi_Vector3 lv = *(Styxi_Vector3 *)((uintptr_t)lp + IOS_Pawn__m_LastPawnPosDirect);
-                    Styxi_Vector3 hv = *(Styxi_Vector3 *)((uintptr_t)pawn + IOS_Pawn__m_LastPawnPosDirect);
-                    float d = sqrtf((lv.x-hv.x)*(lv.x-hv.x) + (lv.y-hv.y)*(lv.y-hv.y) + (lv.z-hv.z)*(lv.z-hv.z));
-                    NSString *line = [NSString stringWithFormat:@"%@ %.0fm", name ?: (bot ? @"BOT" : @"?"), d];
-                    [stroke set];
-                    [line drawAtPoint:CGPointMake(box.origin.x, box.origin.y - 12) withAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:9]}];
-                }
-            } else if (name) {
+        if (StyxCfg.espDistance) {
+            void *lp = fnLocalPawn();
+            if (StyxPtrOK((uintptr_t)lp)) {
+                Styxi_Vector3 lv = *(Styxi_Vector3 *)((uintptr_t)lp + IOS_Pawn__m_LastPawnPos);
+                Styxi_Vector3 hv = *(Styxi_Vector3 *)((uintptr_t)pawn + IOS_Pawn__m_LastPawnPos);
+                float d = sqrtf((lv.x-hv.x)*(lv.x-hv.x) + (lv.y-hv.y)*(lv.y-hv.y) + (lv.z-hv.z)*(lv.z-hv.z));
+                NSString *line = [NSString stringWithFormat:@"%.0fm", d];
                 [stroke set];
-                [name drawAtPoint:CGPointMake(box.origin.x, box.origin.y - 12) withAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:9]}];
+                [line drawAtPoint:CGPointMake(box.origin.x, box.origin.y - 12) withAttributes:@{NSFontAttributeName:[UIFont systemFontOfSize:9]}];
             }
         }
     }

@@ -5,7 +5,6 @@ typedef struct {
     // ESP
     BOOL espOn;
     BOOL espBox;
-    BOOL espName;
     BOOL espDistance;
     BOOL espHealth;
 

@@ -4,7 +4,6 @@
 StyxConfig_t StyxCfg = {
     .espOn        = NO,
     .espBox       = YES,
-    .espName      = YES,
     .espDistance  = YES,
     .espHealth    = YES,
     .aimOn        = NO,

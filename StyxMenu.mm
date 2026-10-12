@@ -11,7 +11,7 @@
 @property (nonatomic, strong) UIButton *fab;
 @property (nonatomic, strong) UIView *panel;
 @property (nonatomic, assign) BOOL panelOpen;
-@property (nonatomic, strong) UISwitch *swEsp, *swBox, *swName, *swDist, *swHp, *swAim;
+@property (nonatomic, strong) UISwitch *swEsp, *swBox, *swDist, *swHp, *swAim;
 @property (nonatomic, strong) UISlider *slAim;
 @property (nonatomic, strong) UILabel *lblAim;
 @end
@@ -118,14 +118,12 @@
     CGFloat ty = 44;
     self.swEsp  = [self switchRow:@"ESP"        y:&ty];
     self.swBox  = [self switchRow:@"Box"        y:&ty];
-    self.swName = [self switchRow:@"Name"       y:&ty];
     self.swDist = [self switchRow:@"Distance"   y:&ty];
     self.swHp   = [self switchRow:@"Health"     y:&ty];
     self.swAim  = [self switchRow:@"Aim Assist" y:&ty];
 
     [self.swEsp  addTarget:self action:@selector(espChanged:)  forControlEvents:UIControlEventValueChanged];
     [self.swBox  addTarget:self action:@selector(boxChanged:)  forControlEvents:UIControlEventValueChanged];
-    [self.swName addTarget:self action:@selector(nameChanged:) forControlEvents:UIControlEventValueChanged];
     [self.swDist addTarget:self action:@selector(distChanged:) forControlEvents:UIControlEventValueChanged];
     [self.swHp   addTarget:self action:@selector(hpChanged:)    forControlEvents:UIControlEventValueChanged];
     [self.swAim  addTarget:self action:@selector(aimChanged:)  forControlEvents:UIControlEventValueChanged];
@@ -181,7 +179,6 @@
 - (void)syncSwitches {
     self.swEsp.on  = StyxCfg.espOn;
     self.swBox.on  = StyxCfg.espBox;
-    self.swName.on = StyxCfg.espName;
     self.swDist.on = StyxCfg.espDistance;
     self.swHp.on   = StyxCfg.espHealth;
     self.swAim.on  = StyxCfg.aimOn;
@@ -204,7 +201,6 @@
 // ---- switch actions (bound in buildPanel) ----
 - (void)espChanged:(UISwitch *)s  { StyxCfg.espOn = s.on; if (s.on) StyxStartOverlay(); }
 - (void)boxChanged:(UISwitch *)s  { StyxCfg.espBox = s.on; }
-- (void)nameChanged:(UISwitch *)s { StyxCfg.espName = s.on; }
 - (void)distChanged:(UISwitch *)s { StyxCfg.espDistance = s.on; }
 - (void)hpChanged:(UISwitch *)s    { StyxCfg.espHealth = s.on; }
 - (void)aimChanged:(UISwitch *)s  { StyxCfg.aimOn = s.on; }

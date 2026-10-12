@@ -40,7 +40,9 @@ static inline uintptr_t StyxBase(void) {
 #define IOS_Pawn__m_IsBot                 0x5B9
 #define IOS_Pawn__m_PlayerInfo            0x5C0
 #define IOS_Pawn__m_Mesh                  0x628
-#define IOS_Pawn__m_LastPawnPosDirect     0x5C8   // inline Vector3 (x,y,z)
+#define IOS_Pawn__m_LastPawnPos           0x5C8   // inline Vector3 (x,y,z)
+                                       // (dump field name is m_LastPawnPos; there
+                                       //  is no "m_LastPawnPosDirect" in 1.6.58)
 
 // AttackableTargetInfo is an EMBEDDED struct at Pawn+0x78 on iOS.
 // (Android derefs it as a pointer — do NOT copy that pattern here.)
@@ -51,5 +53,9 @@ static inline uintptr_t StyxBase(void) {
 #define IOS_Pawn__m_Health                (IOS_AT__m_AttackableInfo + IOS_ATI__m_Health)     // 0xAC
 #define IOS_Pawn__m_MaxHealth             (IOS_AT__m_AttackableInfo + IOS_ATI__m_MaxHealth)  // 0xB0
 
-#define IOS_PlayerInfo__m_NickName        0x160
+// NOTE: PlayerInfo.m_NickName is intentionally absent. The 1.6.58 dump reports
+// it as the unresolved sentinel 0x7FFFFFFF, and no such field exists on
+// PlayerInfo or its base (AttackableTargetInfo), so any read would be garbage.
+// ESP therefore draws no names; bots are distinguished by box colour.
+
 #define IOS_BaseGame__EnemyPawns          0x178
