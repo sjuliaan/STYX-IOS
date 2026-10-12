@@ -14,7 +14,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          brew install ldid dpkg xz
+          brew install ldid make xz
           echo "Xcode: $(xcode-select -p)"
           echo "SDK: $(xcrun --sdk iphoneos --show-sdk-path)"
 
@@ -22,22 +22,24 @@ jobs:
         run: |
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-          ls $HOME/theos/sdks/
+          test -d "$HOME/theos/vendor/include/.git" || { echo "vendor submodules missing"; exit 1; }
 
       - name: Build Tweak
         run: |
           export THEOS=$HOME/theos
-          make package FINALPACKAGE=1
+          make all FINALPACKAGE=1
 
       - name: Collect artifact
         run: |
           mkdir -p output
-          DYLIB=$(find .theos/obj -name "*.dylib" | head -1)
+          DYLIB=$(find .theos -name "StyxMenu.dylib" | head -1)
           if [ -z "$DYLIB" ]; then
-            dpkg -x packages/*.deb extracted
-            DYLIB=$(find extracted -name "*.dylib" | head -1)
+            echo "StyxMenu.dylib not produced. Tree:"
+            find .theos -maxdepth 3 -type d
+            exit 1
           fi
           cp "$DYLIB" output/StyxMenu.dylib
+          lipo -info output/StyxMenu.dylib
           ls -la output/
 
       - name: Upload dylib
