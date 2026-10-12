@@ -22,7 +22,10 @@ jobs:
         run: |
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-          test -d "$HOME/theos/vendor/include/.git" || { echo "vendor submodules missing"; exit 1; }
+          # NOTE: a submodule's .git is a file, not a directory, on modern git.
+          test -e "$HOME/theos/vendor/include/.git" || { echo "vendor submodules missing"; exit 1; }
+          test -e "$HOME/theos/vendor/lib/.git" || { echo "vendor submodules missing"; exit 1; }
+          test -e "$HOME/theos/vendor/logos/.git" || { echo "vendor submodules missing"; exit 1; }
 
       - name: Build Tweak
         run: |
