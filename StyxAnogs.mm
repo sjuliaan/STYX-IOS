@@ -23,11 +23,14 @@
 #import <dlfcn.h>
 #import <dirent.h>
 #import <mach/mach.h>
+#import <mach-o/dyld.h>
+#import <mach/task_info.h>
 #import <sys/sysctl.h>
 #import <sys/stat.h>
 #import <fcntl.h>
 #import <unistd.h>
 #import <pthread.h>
+#import <errno.h>
 #import <stdint.h>
 #import <string.h>
 #import <stdio.h>
