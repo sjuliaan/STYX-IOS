@@ -15,6 +15,7 @@
 // ============================================================================
 #pragma once
 #import <mach/mach.h>
+#import <sys/mman.h>
 #import <stdint.h>
 #import <string.h>
 
@@ -32,22 +33,21 @@ static inline void StyxFlushICache(uintptr_t addr, size_t size) {
 // Returns a fresh RWX trampoline with `size` bytes copied from target,
 // terminated by an absolute branch back to target+size.
 static inline void *StyxMakeTrampoline(void *target, size_t size) {
-    vm_size_t page = 0x1000;
-    vm_address_t tramp = 0;
-    kern_return_t kr = vm_allocate(mach_task_self(), &tramp, page,
-                                   VM_MAKE_TAG(VM_ALLOC_DEFAULT), VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
-    if (kr != KERN_SUCCESS) return NULL;
+    size_t page = 0x1000;
+    void *tramp = mmap(NULL, page, PROT_READ | PROT_WRITE | PROT_EXEC,
+                       MAP_ANON | MAP_PRIVATE, -1, 0);
+    if (tramp == MAP_FAILED) return NULL;
 
-    memcpy((void *)tramp, target, size);
+    memcpy(tramp, target, size);
 
     // absolute jump back: LDR X17, #8 ; BR X17 ; .quad target+size
     uint32_t back[4] = {0x58000031u, 0xD61F0220u, 0u, 0u};
     back[2] = (uint32_t)((uint64_t)target + size);
     back[3] = (uint32_t)(((uint64_t)target + size) >> 32);
-    memcpy((void *)(tramp + size), back, sizeof(back));
+    memcpy((char *)tramp + size, back, sizeof(back));
 
-    StyxFlushICache(tramp, page);
-    return (void *)tramp;
+    StyxFlushICache((uintptr_t)tramp, page);
+    return tramp;
 }
 
 static inline int StyxHookFunction(void *target, void *replacement, void **orig) {
