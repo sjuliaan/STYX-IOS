@@ -10,7 +10,7 @@ CODM Garena **1.6.58** (build 5940), arm64, **no jailbreak required**.
 | Stock 1.6.58 IPA | `com.garena.game.codm_1.6.58_und3fined 2.ipa` (decrypted) |
 | `StyxMenu.dylib` | CI artifact (see below) |
 | Free Apple ID | for signing; 7-day refresh cycle |
-| SideStore (or Sideloadly/ESign) | sideloading on Windows |
+| Sideloadly **or** ESign **or** SideStore | pick one (see §3) |
 
 ## 1. Build the dylib
 
@@ -27,23 +27,38 @@ python tools\inject.py "com.garena.game.codm_1.6.58_und3fined 2.ipa" StyxMenu.dy
 
 This produces `CODM-STYX-1.6.58.ipa` — the installable mod IPA.
 
-## 3. Install
+## 3. Sign & install
 
-1. Install **SideStore** on your iPhone and pair it with your PC (their guide:
-   SideStore + WireGuard).
-2. Connect the iPhone, open SideStore → **My Apps → +** → pick
-   `CODM-STYX-1.6.58.ipa`.
-3. Sign in with your **free Apple ID** when prompted.
-4. Trust the developer profile: **Settings → General → VPN & Device Management**.
-5. Launch CODM.
+**Do not sign the IPA by hand.** On a non-jailbroken device iOS rejects an
+ad-hoc (`ldid`) signature; what is needed is a provisioning profile, which only
+a tool holding your Apple ID can obtain. The IPA from step 2 is intentionally
+left unsigned so any sideload tool can re-sign every Mach-O in the bundle —
+including our patched `APMDeviceInfoSupport_dylib` and added `Cloud.framework`.
+
+Pick one:
+
+- **Sideloadly** (easiest, Windows). Download → enter Apple ID → plug in the
+  iPhone and pick it → choose the IPA → **Start**. Over USB; fastest option.
+- **ESign** (on-device). Install ESign, open the IPA from Files, sign with your
+  Apple ID, install.
+- **SideStore** (best long-term, auto-refresh). Install and pair with your PC,
+  then **My Apps → +** → pick the IPA. Refreshes before the 7-day expiry, but
+  the WireGuard pairing setup is the fiddliest of the three.
+
+After installing, **trust the profile**: Settings → General → VPN & Device
+Management → your Apple ID → Trust. Then launch CODM.
 
 ## 4. Use the mod
 
 - A floating **"S"** button appears over the game. Drag it anywhere.
 - Tap it to open the panel.
-- **ESP** → Box / Name / Distance / Health
+- **ESP** → Box / Distance / Health
 - **Aim Assist** → on/off + **Strength** slider (1–20). This amplifies the
   game's own aim assist; it does not write aim rotations itself.
+- **Anti-Cheat** → the anogs (Tencent TSS) bypass on/off, plus a live line
+  showing how many pointers were hooked and how many probes were blocked.
+  If it reads "not loaded / not hooked", the bypass did not find the
+  framework.
 
 ## 5. Maintenance
 
