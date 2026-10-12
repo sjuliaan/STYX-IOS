@@ -16,7 +16,6 @@
 #pragma once
 #import <mach/mach.h>
 #import <sys/mman.h>
-#import <libkern/OSCacheControl.h>
 #import <stdint.h>
 #import <string.h>
 
@@ -28,11 +27,25 @@ static inline int StyxProtectRWX(uintptr_t addr, size_t size) {
 }
 
 static inline void StyxFlushICache(uintptr_t addr, size_t size) {
-    // NOTE: do not use __builtin___clear_cache here. It lowers to a call to the
-    // __clear_cache libcall, which modern iOS SDKs do not export; it only exists
-    // as a static inline in <libkern/OSCacheControl.h>, so the link fails with
-    // "Undefined symbols: ___clear_cache" unless that header is imported.
-    __clear_cache((void *)addr, (void *)(addr + size));
+#if defined(__aarch64__)
+    // Emit the AArch64 cache-maintenance sequence directly.
+    //
+    // Do NOT use __builtin___clear_cache or <libkern/OSCacheControl.h> here.
+    // Both lower to a call to the __clear_cache libcall, and that symbol is not
+    // exported by the iOS libSystem, so the dylib fails to link with
+    // "Undefined symbols: ___clear_cache". This inline sequence is precisely
+    // what that routine performs, with no external symbol dependency.
+    uintptr_t start = addr & ~(uintptr_t)0xFFF;
+    uintptr_t end   = (addr + size + 0xFFF) & ~(uintptr_t)0xFFF;
+    for (uintptr_t p = start; p < end; p += 0x1000)
+        asm volatile("dc cvau, %0" :: "r"(p) : "memory");
+    asm volatile("dsb ish" ::: "memory");
+    for (uintptr_t p = start; p < end; p += 0x1000)
+        asm volatile("ic ivau, %0" :: "r"(p) : "memory");
+    asm volatile("isb" ::: "memory");
+#else
+    __builtin___clear_cache((char *)addr, (char *)(addr + size));
+#endif
 }
 
 // Returns a fresh RWX trampoline with `size` bytes copied from target,
