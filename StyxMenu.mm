@@ -5,15 +5,17 @@
 // ============================================================================
 #import <UIKit/UIKit.h>
 #import "StyxConfig.h"
+#import "StyxAnogs.h"
 
 @interface StyxMenuController () <UIGestureRecognizerDelegate>
 @property (nonatomic, strong) UIWindow *window;
 @property (nonatomic, strong) UIButton *fab;
 @property (nonatomic, strong) UIView *panel;
 @property (nonatomic, assign) BOOL panelOpen;
-@property (nonatomic, strong) UISwitch *swEsp, *swBox, *swDist, *swHp, *swAim;
+@property (nonatomic, strong) UISwitch *swEsp, *swBox, *swDist, *swHp, *swAim, *swAc;
 @property (nonatomic, strong) UISlider *slAim;
 @property (nonatomic, strong) UILabel *lblAim;
+@property (nonatomic, strong) UILabel *lblAc;
 @end
 
 @implementation StyxMenuController
@@ -121,12 +123,14 @@
     self.swDist = [self switchRow:@"Distance"   y:&ty];
     self.swHp   = [self switchRow:@"Health"     y:&ty];
     self.swAim  = [self switchRow:@"Aim Assist" y:&ty];
+    self.swAc   = [self switchRow:@"Anti-Cheat"  y:&ty];
 
     [self.swEsp  addTarget:self action:@selector(espChanged:)  forControlEvents:UIControlEventValueChanged];
     [self.swBox  addTarget:self action:@selector(boxChanged:)  forControlEvents:UIControlEventValueChanged];
     [self.swDist addTarget:self action:@selector(distChanged:) forControlEvents:UIControlEventValueChanged];
     [self.swHp   addTarget:self action:@selector(hpChanged:)    forControlEvents:UIControlEventValueChanged];
     [self.swAim  addTarget:self action:@selector(aimChanged:)  forControlEvents:UIControlEventValueChanged];
+    [self.swAc   addTarget:self action:@selector(acChanged:)    forControlEvents:UIControlEventValueChanged];
 
     // Aim strength slider
     UILabel *sl = [[UILabel alloc] initWithFrame:CGRectMake(14, ty + 2, 90, 20)];
@@ -148,6 +152,15 @@
     self.lblAim.textColor = [UIColor whiteColor];
     self.lblAim.font = [UIFont systemFontOfSize:11];
     [self.panel addSubview:self.lblAim];
+
+    // Live anogs diagnostics -- this is the only way to tell whether the
+    // bypass actually installed and whether it is intercepting anything.
+    self.lblAc = [[UILabel alloc] initWithFrame:CGRectMake(14, ty + 4, w - 28, 30)];
+    self.lblAc.textColor = [UIColor colorWithWhite:0.7f alpha:1];
+    self.lblAc.font = [UIFont systemFontOfSize:10];
+    self.lblAc.numberOfLines = 2;
+    [self.panel addSubview:self.lblAc];
+    ty += 34;
 
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
     close.frame = CGRectMake(w - 40, 6, 32, 24);
@@ -182,8 +195,31 @@
     self.swDist.on = StyxCfg.espDistance;
     self.swHp.on   = StyxCfg.espHealth;
     self.swAim.on  = StyxCfg.aimOn;
+    self.swAc.on   = StyxCfg.anogsBypassOn;
     self.slAim.value = StyxCfg.aimStrength;
     self.lblAim.text = [NSString stringWithFormat:@"%.1f", StyxCfg.aimStrength];
+    [self updateAcLabel];
+}
+
+// Shows whether the anogs pointer table was found and how much it has
+// intercepted so far. Without this, a failed install looks identical to a
+// working one (both are just "no kick").
+- (void)updateAcLabel {
+    if (!self.lblAc) return;
+    if (!StyxAnogs.installed) {
+        self.lblAc.text = @"anogs: not loaded / not hooked";
+        return;
+    }
+    uint64_t total = StyxAnogs.hidImages + StyxAnogs.hidPaths + StyxAnogs.hidRegions
+                   + StyxAnogs.hidThreads + StyxAnogs.neuteredSysctl
+                   + StyxAnogs.hiddenModules;
+    self.lblAc.text = [NSString stringWithFormat:
+        @"anogs: %d slots hooked | %llu blocked (img %llu path %llu dbg %llu)",
+        StyxAnogs.hooksApplied,
+        (unsigned long long)total,
+        (unsigned long long)StyxAnogs.hidImages,
+        (unsigned long long)StyxAnogs.hidPaths,
+        (unsigned long long)StyxAnogs.neuteredSysctl];
 }
 
 - (void)dragFab:(UIPanGestureRecognizer *)g {
@@ -204,5 +240,6 @@
 - (void)distChanged:(UISwitch *)s { StyxCfg.espDistance = s.on; }
 - (void)hpChanged:(UISwitch *)s    { StyxCfg.espHealth = s.on; }
 - (void)aimChanged:(UISwitch *)s  { StyxCfg.aimOn = s.on; }
+- (void)acChanged:(UISwitch *)s    { StyxCfg.anogsBypassOn = s.on; [self updateAcLabel]; }
 
 @end

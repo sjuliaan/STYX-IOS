@@ -8,4 +8,6 @@ StyxConfig_t StyxCfg = {
     .espHealth    = YES,
     .aimOn        = NO,
     .aimStrength  = 6.0f,
+
+    .anogsBypassOn = YES,
 };

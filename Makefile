@@ -2,7 +2,7 @@ TARGET := iphone:clang:latest:15.0
 ARCHS := arm64
 TWEAK_NAME := StyxMenu
 
-StyxMenu_FILES := StyxMain.xm StyxMenu.mm StyxOverlay.mm StyxAim.mm StyxConfig.mm
+StyxMenu_FILES := StyxMain.xm StyxMenu.mm StyxOverlay.mm StyxAim.mm StyxConfig.mm StyxAnogs.mm
 
 INSTALL_TARGET_PROCESSES := codm
 SKIP_INSTALL := 1

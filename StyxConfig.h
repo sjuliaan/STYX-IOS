@@ -11,6 +11,9 @@ typedef struct {
     // Aim assist (amplifies the game's own assist speed)
     BOOL  aimOn;
     float aimStrength;   // 1.0 .. 20.0, returned from GetAssitAimSpeed
+
+    // anogs (Tencent TSS) bypass
+    BOOL anogsBypassOn;
 } StyxConfig_t;
 
 extern StyxConfig_t StyxCfg;
@@ -29,3 +32,4 @@ extern StyxConfig_t StyxCfg;
 // Entry points
 void StyxInstallAimHook(void);
 void StyxStartOverlay(void);
+void StyxAnogsInstall(void);
