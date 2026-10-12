@@ -21,7 +21,9 @@ jobs:
       - name: Setup Theos
         run: |
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          git clone --depth 1 https://github.com/theos/sdks $HOME/theos/sdks
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          ls $HOME/theos/sdks/
 
       - name: Build Tweak
         run: |
