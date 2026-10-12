@@ -175,8 +175,8 @@ static void StyxInitFnPointers(void) {
             if (StyxCfg.espDistance) {
                 void *lp = fnLocalPawn();
                 if (StyxPtrOK((uintptr_t)lp)) {
-                    Styxi_Vector3 lv = *(Styxi_Vector3 *)(lp + IOS_Pawn__m_LastPawnPosDirect);
-                    Styxi_Vector3 hv = *(Styxi_Vector3 *)(pawn + IOS_Pawn__m_LastPawnPosDirect);
+                    Styxi_Vector3 lv = *(Styxi_Vector3 *)((uintptr_t)lp + IOS_Pawn__m_LastPawnPosDirect);
+                    Styxi_Vector3 hv = *(Styxi_Vector3 *)((uintptr_t)pawn + IOS_Pawn__m_LastPawnPosDirect);
                     float d = sqrtf((lv.x-hv.x)*(lv.x-hv.x) + (lv.y-hv.y)*(lv.y-hv.y) + (lv.z-hv.z)*(lv.z-hv.z));
                     NSString *line = [NSString stringWithFormat:@"%@ %.0fm", name ?: (bot ? @"BOT" : @"?"), d];
                     [stroke set];
