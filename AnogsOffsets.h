@@ -38,9 +38,12 @@
 #define ANOGS_SLOT_dlsym                     0x2985C0
 
 // ---- filesystem probes (jailbreak / injection path checks) ----
+// NOTE: openat is deliberately absent -- it is variadic and cannot be safely
+// forwarded, so it is left alone. stat/access/opendir/statfs cover the same
+// paths.
 #define ANOGS_SLOT_stat                      0x2989D0
 #define ANOGS_SLOT_access                    0x298510
-#define ANOGS_SLOT_openat                    0x298848
+#define ANOGS_SLOT_openat                    0x298848   // not patched
 #define ANOGS_SLOT_opendir                   0x298850
 #define ANOGS_SLOT_readdir                   0x298920
 #define ANOGS_SLOT_readlink                  0x298928

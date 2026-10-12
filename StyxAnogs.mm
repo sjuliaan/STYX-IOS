@@ -45,23 +45,27 @@
 // guards we are avoiding. ABI is identical -- natural_t/integer_t are both
 // unsigned int.
 //
-// Verified against anogs' own call site (sub_7230 @ 0x7778):
+// CRITICAL: task_info takes SIX parameters. An earlier revision declared only
+// four (matching what anogs' call site at 0x7778 appears to set in X0-X3) and
+// that shift corrupted the caller's registers, crashing the game. The real
+// signature is:
 //
-//     MOV  W0, <mach_task_self()>      ; target_task
-//     MOV  W1, #0x13                   ; flavor = TASK_DYLD_INFO
-//     ADD  X2, SP, #task_info_out      ; out
-//     SUB  X3, X29, #task_info_outCnt  ; count   (pre-set to 0x10)
-//     BL   _task_info
+//   int task_info(mach_task_self_t   target,
+//                 task_flavor_t       flavor,
+//                 flavor_t           *out,
+//                 mach_msg_type_number_t *count,
+//                 void               *info,
+//                 mach_msg_type_number_t  count_size);
 //
-// Only X0-X3 are set; X4/X5 are never initialised. The prototype therefore
-// matches the 4-argument form anogs actually uses.
+// The caller only initialising X0-X3 does not make it a 4-argument call -- the
+// callee still reads X4/X5.
 typedef unsigned int  styx_task_t;
 typedef unsigned int  styx_flavor_t;
 typedef unsigned int *styx_flavor_out_t;
 typedef unsigned int  styx_msg_count_t;
 
 typedef int  (*task_info_fn)(styx_task_t, styx_flavor_t, styx_flavor_out_t,
-                             styx_msg_count_t *);
+                             styx_msg_count_t *, void *, styx_msg_count_t);
 
 StyxAnogsStats StyxAnogs;
 
@@ -106,11 +110,10 @@ static Fn_dyld_image_count    s_orig_imageCount  = NULL;
 
 static int  (*s_orig_stat)(const char *, struct stat *)        = NULL;
 static int  (*s_orig_access)(const char *, int)                 = NULL;
-static int  (*s_orig_openat)(int, const char *, int, ...)      = NULL;
 static DIR *(*s_orig_opendir)(const char *)                     = NULL;
 static int  (*s_orig_statfs)(const char *, struct statfs *)    = NULL;
 static char *(*s_orig_getenv)(const char *)                    = NULL;
-static int  (*s_orig_sysctl)(int, void *, size_t *, void *, size_t) = NULL;
+static int  (*s_orig_sysctl)(int *, unsigned int, void *, size_t *, void *, size_t) = NULL;
 static int  (*s_orig_sysctlbyname)(const char *, void *, size_t *, void *, size_t) = NULL;
 static task_info_fn s_orig_task_info = NULL;
 static void *(*s_orig_dlopen)(const char *, int)                = NULL;
@@ -122,11 +125,11 @@ static void StyxResolveOriginals(void) {
     s_orig_imageCount  = (Fn_dyld_image_count)dlsym(RTLD_DEFAULT, "_dyld_image_count");
     s_orig_stat        = (int (*)(const char *, struct stat *))dlsym(RTLD_DEFAULT, "stat");
     s_orig_access      = (int (*)(const char *, int))dlsym(RTLD_DEFAULT, "access");
-    s_orig_openat      = (int (*)(int, const char *, int, ...))dlsym(RTLD_DEFAULT, "openat");
     s_orig_opendir     = (DIR *(*)(const char *))dlsym(RTLD_DEFAULT, "opendir");
     s_orig_statfs      = (int (*)(const char *, struct statfs *))dlsym(RTLD_DEFAULT, "statfs");
     s_orig_getenv      = (char *(*)(const char *))dlsym(RTLD_DEFAULT, "getenv");
-    s_orig_sysctl      = (int (*)(int, void *, size_t *, void *, size_t))dlsym(RTLD_DEFAULT, "sysctl");
+    s_orig_sysctl      = (int (*)(int *, unsigned int, void *, size_t *, void *, size_t))
+                         dlsym(RTLD_DEFAULT, "sysctl");
     s_orig_sysctlbyname= (int (*)(const char *, void *, size_t *, void *, size_t))dlsym(RTLD_DEFAULT, "sysctlbyname");
     s_orig_task_info   = (task_info_fn)dlsym(RTLD_DEFAULT, "task_info");
     s_orig_dlopen      = (void *(*)(const char *, int))dlsym(RTLD_DEFAULT, "dlopen");
@@ -175,23 +178,30 @@ static BOOL StyxImageIsSensitive(const char *name) {
 // ---------------------------------------------------------------------------
 // Interposers
 // ---------------------------------------------------------------------------
-// Image enumeration: return the real count, but hide matching names.
+// Image enumeration: hide matching names.
+//
+// We return "" rather than NULL. Returning NULL crashes anogs: sub_D0308 in the
+// boot path does `v8 = [array objectAtIndex:0]` and only checks `!= nullptr`
+// before messaging it -- a NULL name propagates into a string that is then sent
+// cStringUsingEncoding:. An empty string cannot match any needle and cannot
+// fault.
 static const char *Styx_dyld_get_image_name(uint32_t index) {
-    if (!StyxCfg.anogsBypassOn) goto passthrough_name;
-    if (s_orig_getImageName) {
-        const char *n = s_orig_getImageName(index);
-        if (StyxImageIsSensitive(n)) { StyxAnogs.hidImages++; return NULL; }
-        return n;
+    if (!s_orig_getImageName) return "";
+    const char *n = s_orig_getImageName(index);
+    if (!n) return "";
+    if (StyxCfg.anogsBypassOn && StyxImageIsSensitive(n)) {
+        StyxAnogs.hidImages++;
+        return "";
     }
-passthrough_name:
-    return s_orig_getImageName ? s_orig_getImageName(index) : NULL;
+    return n;
 }
 
-// Shrink the count so the skipped high indices are never visited.
+// The count stays accurate: we do not shrink it, because callers that use the
+// index to fetch a header would then read past the array. Hiding the *name* is
+// sufficient -- anogs' string tests simply never match.
 static uint32_t Styx_dyld_image_count(void) {
     uint32_t real = s_orig_imageCount ? s_orig_imageCount() : 0;
-    if (!StyxCfg.anogsBypassOn) return real;
-    return real;   // count stays accurate; names return NULL instead
+    return real;
 }
 
 static int Styx_stat(const char *path, struct stat *st) {
@@ -210,15 +220,11 @@ static int Styx_access(const char *path, int mode) {
     return s_orig_access ? s_orig_access(path, mode) : -1;
 }
 
-static int Styx_openat(int dirfd, const char *path, int flags, ...) {
-    if (StyxCfg.anogsBypassOn && StyxPathIsSensitive(path)) {
-        StyxAnogs.hidPaths++;
-        errno = ENOENT;
-        return -1;
-    }
-    // mode is only meaningful with O_CREAT; passing 0 is safe otherwise.
-    return s_orig_openat ? s_orig_openat(dirfd, path, flags, 0) : -1;
-}
+// NOTE: openat is deliberately NOT intercepted. It is variadic, and variadic
+// arguments cannot be forwarded portably -- we would have to guess the mode
+// argument, and forcing 0 on an O_CREAT call creates files with no permission
+// bits, which breaks anogs in new ways. Path-based hiding is already covered by
+// stat / access / opendir / statfs below.
 
 static DIR *Styx_opendir(const char *path) {
     if (StyxCfg.anogsBypassOn && StyxPathIsSensitive(path)) {
@@ -248,31 +254,44 @@ static char *Styx_getenv(const char *name) {
     return s_orig_getenv ? s_orig_getenv(name) : NULL;
 }
 
-// sysctl is used for the debugger flag (KERN_PROC / KERN_PROC_PID, whose
-// kinfo_proc.kp_proc.p_flag carries P_TRACED) and for device identity.
+// sysctl carries the debugger flag (KERN_PROC / KERN_PROC_PID, whose
+// kinfo_proc.kp_proc.p_flag contains P_TRACED) and device identity.
 //
-// We neutralise ONLY the KERN_PROC debugger probe. Device identity must stay
-// genuine: faking hw.machine would be trivially inconsistent with what the
-// server sees and is a worse signal than telling the truth.
-static int Styx_sysctl(int name, void *oldp, size_t *oldlenp,
+// CRITICAL: sysctl takes SIX parameters, the first two being an MIB:
+//
+//   int sysctl(int *name, u_int namelen,
+//              void *oldp, size_t *oldlenp,
+//              void *newp, size_t newlen);
+//
+// An earlier revision declared it with five (dropping namelen). That shifted
+// every register: the real sysctl then believed the destination buffer was on
+// the caller's stack and wrote the result length in bytes straight over
+// anogs' saved registers. That stack corruption is what produced the observed
+// crash -- objc_msgSend on 0xFFFFFFFFFFFFFFFF several seconds later, in an
+// unrelated-looking function.
+//
+// We now only touch the KERN_PROC debugger probe. Device identity stays
+// genuine: faking hw.machine would clash with what the server observes and is
+// a worse signal than telling the truth.
+static int Styx_sysctl(int *name, unsigned int namelen,
+                       void *oldp, size_t *oldlenp,
                        void *newp, size_t newlen) {
-    if (StyxCfg.anogsBypassOn && name == 1 /*CTL_KERN*/) {
-        // KERN_PROC == 12. If the caller is sizing or reading a kinfo_proc for
-        // our own pid, hand back a zeroed structure: p_flag == 0 means
-        // "not traced", which is true.
-        const int kKernProc = 12;
-        if (oldp && oldlenp && *oldlenp >= 136 /*sizeof(struct kinfo_proc) on arm64*/) {
+    if (StyxCfg.anogsBypassOn && name && namelen >= 2 &&
+        name[0] == 1 /*CTL_KERN*/ && name[1] == 12 /*KERN_PROC*/) {
+        // A zeroed kinfo_proc means p_flag == 0, i.e. "not traced", which is
+        // the truth on this device.
+        if (oldp && oldlenp && *oldlenp >= 136 /*sizeof(struct kinfo_proc)*/) {
             memset(oldp, 0, *oldlenp);
             StyxAnogs.neuteredSysctl++;
             return 0;
         }
-        if (newp) {
+        if (!oldp && oldlenp) {
+            *oldlenp = 136;          // sizing query
             StyxAnogs.neuteredSysctl++;
-            return 0;   // pretend the write succeeded
+            return 0;
         }
-        (void)kKernProc;
     }
-    return s_orig_sysctl ? s_orig_sysctl(name, oldp, oldlenp, newp, newlen) : -1;
+    return s_orig_sysctl ? s_orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen) : -1;
 }
 
 static int Styx_sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
@@ -285,9 +304,14 @@ static int Styx_sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
 // TASK_DYLD_INFO (0x13). anogs only checks that the returned format field is
 // >= 1, i.e. "is dyld info available at all" -- it does not walk the image
 // array here. Report a plausible non-zero format so the check passes.
+//
+// All six arguments are forwarded verbatim.
 static int Styx_task_info(styx_task_t target, styx_flavor_t flavor,
-                          styx_flavor_out_t out, styx_msg_count_t *cnt) {
-    int rc = s_orig_task_info ? s_orig_task_info(target, flavor, out, cnt) : -1;
+                          styx_flavor_out_t out, styx_msg_count_t *cnt,
+                          void *info, styx_msg_count_t countSize) {
+    int rc = s_orig_task_info
+           ? s_orig_task_info(target, flavor, out, cnt, info, countSize)
+           : -1;
     if (StyxCfg.anogsBypassOn && rc == 0 && out && *out == 0) {
         *out = 1;
         StyxAnogs.neuteredSysctl++;
@@ -334,7 +358,6 @@ void StyxAnogsInstall(void) {
     StyxPatchSlot(base, ANOGS_SLOT_dyld_image_count,    (void *)Styx_dyld_image_count);
     StyxPatchSlot(base, ANOGS_SLOT_stat,                (void *)Styx_stat);
     StyxPatchSlot(base, ANOGS_SLOT_access,              (void *)Styx_access);
-    StyxPatchSlot(base, ANOGS_SLOT_openat,              (void *)Styx_openat);
     StyxPatchSlot(base, ANOGS_SLOT_opendir,             (void *)Styx_opendir);
     StyxPatchSlot(base, ANOGS_SLOT_statfs,              (void *)Styx_statfs);
     StyxPatchSlot(base, ANOGS_SLOT_getenv,              (void *)Styx_getenv);
