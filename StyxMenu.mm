@@ -1,5 +1,5 @@
-// ============================================================================
-// STYX-iOS — mod menu (UIKit overlay)
+﻿// ============================================================================
+// STYX-iOS â€” mod menu (UIKit overlay)
 // Floating draggable button -> panel with UISwitch rows + aim slider.
 // Non-key window so game input is never stolen.
 // ============================================================================
@@ -190,7 +190,7 @@ static const CGFloat StyxPadX         = 14.0;
 
     // Size the panel from its content. The aim row is collapsed by default
     // because Aim Assist ships off.
-    [self setAimSectionVisible:SYXCfg.aimOn];
+    [self setAimSectionVisible:StyxCfg.aimOn];
     [self layoutPanel];
 }
 
@@ -248,7 +248,7 @@ static const CGFloat StyxPadX         = 14.0;
     self.swAc.on   = StyxCfg.anogsBypassOn;
     self.slAim.value = StyxCfg.aimStrength;
     self.lblAim.text = [NSString stringWithFormat:@"%.1f", StyxCfg.aimStrength];
-    [self setAimSectionVisible:SYXCfg.aimOn];
+    [self setAimSectionVisible:StyxCfg.aimOn];
     [self updateAcLabel];
 }
 
