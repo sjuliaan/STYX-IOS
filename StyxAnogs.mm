@@ -24,7 +24,6 @@
 #import <dirent.h>
 #import <mach/mach.h>
 #import <mach-o/dyld.h>
-#import <mach/task_info.h>
 #import <sys/sysctl.h>
 #import <sys/stat.h>
 #import <fcntl.h>
@@ -39,14 +38,23 @@
 #import "StyxAnogs.h"
 #import "AnogsOffsets.h"
 
-// The iOS SDK hides the task_info typedefs behind __DARWIN_C_LEVEL guards that
-// <mach/task_info.h> does not always satisfy from ObjC++. Rather than fight the
-// header guards, declare the two typedefs the prototype needs. These are the
-// exact kernel types and are ABI-identical to what task_info expects.
-typedef natural_t   styx_task_t;
-typedef integer_t    styx_flavor_t;
-typedef natural_t   *styx_flavor_out_t;
-typedef mach_msg_type_number_t styx_msg_count_t;
+// The iOS SDK hides the task_info types behind __DARWIN_C_LEVEL guards, and
+// <mach/task_info.h> cannot be included reliably from ObjC++. Note these are
+// written with plain builtin types on purpose: referring to the kernel
+// typedef names (natural_t, mach_msg_type_number_t, ...) reintroduces the very
+// guards we are avoiding. ABI is identical -- natural_t/integer_t are both
+// unsigned int, and task_info is declared with these exact widths:
+//
+//   int task_info(mach_task_self_t target,
+//                 task_flavor_t          flavor,
+//                 flavor_t              *out,
+//                 mach_msg_type_number_t *count,
+//                 void                  *info,
+//                 mach_msg_type_number_t  count_size);
+typedef unsigned int  styx_task_t;
+typedef unsigned int  styx_flavor_t;
+typedef unsigned int *styx_flavor_out_t;
+typedef unsigned int  styx_msg_count_t;
 
 StyxAnogsStats StyxAnogs;
 
@@ -99,7 +107,7 @@ static int  (*s_orig_sysctl)(int, void *, size_t *, void *, size_t) = NULL;
 static int  (*s_orig_sysctlbyname)(const char *, void *, size_t *, void *, size_t) = NULL;
 static int  (*s_orig_task_info)(styx_task_t, styx_flavor_t, styx_flavor_out_t,
                                 styx_msg_count_t *, void *, styx_msg_count_t *) = NULL;
-static int  (*s_orig_dlopen)(const char *, int)                = NULL;
+static void *(*s_orig_dlopen)(const char *, int)                = NULL;
 static void *(*s_orig_dlsym)(void *, const char *)              = NULL;
 
 static void StyxResolveOriginals(void) {
@@ -117,7 +125,7 @@ static void StyxResolveOriginals(void) {
     s_orig_task_info   = (int (*)(styx_task_t, styx_flavor_t, styx_flavor_out_t,
                                   styx_msg_count_t *, void *, styx_msg_count_t *))
                          dlsym(RTLD_DEFAULT, "task_info");
-    s_orig_dlopen      = (int (*)(const char *, int))dlsym(RTLD_DEFAULT, "dlopen");
+    s_orig_dlopen      = (void *(*)(const char *, int))dlsym(RTLD_DEFAULT, "dlopen");
     s_orig_dlsym       = (void *(*)(void *, const char *))dlsym(RTLD_DEFAULT, "dlsym");
 }
 
@@ -300,7 +308,7 @@ static int Styx_task_info(styx_task_t target, styx_flavor_t flavor,
 }
 
 // Dynamic module resolution: refuse to hand back injected tooling.
-static int Styx_dlopen(const char *path, int mode) {
+static void *Styx_dlopen(const char *path, int mode) {
     if (StyxCfg.anogsBypassOn && StyxPathIsSensitive(path)) {
         StyxAnogs.hiddenModules++;
         return NULL;
