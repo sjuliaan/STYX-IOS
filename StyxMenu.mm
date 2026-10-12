@@ -10,7 +10,7 @@
 @property (nonatomic, strong) UIWindow *window;
 @property (nonatomic, strong) UIButton *fab;
 @property (nonatomic, strong) UIView *panel;
-@property (nonatomic, strong) BOOL panelOpen;
+@property (nonatomic, assign) BOOL panelOpen;
 @property (nonatomic, strong) UISwitch *swEsp, *swBox, *swName, *swDist, *swHp, *swAim;
 @property (nonatomic, strong) UISlider *slAim;
 @property (nonatomic, strong) UILabel *lblAim;
@@ -115,7 +115,7 @@
     title.font = [UIFont boldSystemFontOfSize:18];
     [self.panel addSubview:title];
 
-    CGFloat ty = 44, rh = 34;
+    CGFloat ty = 44;
     self.swEsp  = [self switchRow:@"ESP"        y:&ty];
     self.swBox  = [self switchRow:@"Box"        y:&ty];
     self.swName = [self switchRow:@"Name"       y:&ty];
