@@ -1,0 +1,40 @@
+name: Build STYX-iOS
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Theos
+        uses: Randomblock1/theos-action@v1
+        with:
+          theos-dir: 'theos'
+          theos-src: 'https://github.com/theos/theos'
+          theos-sdks: 'https://github.com/theos/sdks'
+
+      - name: Build dylib
+        run: |
+          export THEOS=$GITHUB_WORKSPACE/theos
+          make clean
+          make
+
+      - name: Collect artifact
+        run: |
+          mkdir -p output
+          DYLIB=$(find .theos/obj -name "*.dylib" | head -1)
+          cp "$DYLIB" output/StyxMenu.dylib
+          ls -la output/
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: StyxMenu.dylib
+          path: output/StyxMenu.dylib
+          retention-days: 30
