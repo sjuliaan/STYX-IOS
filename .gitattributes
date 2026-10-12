@@ -1,0 +1,8 @@
+# Normalize to LF in the repo and in checkouts. Makefiles, workflow YAML and
+# shell steps are all sensitive to CRLF (e.g. a stray \r silently becomes part
+# of a make target name).
+* text=auto eol=lf
+
+*.dylib binary
+*.deb binary
+*.ipa binary
