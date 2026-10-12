@@ -190,7 +190,7 @@ static const CGFloat StyxPadX         = 14.0;
 
     // Size the panel from its content. The aim row is collapsed by default
     // because Aim Assist ships off.
-    [self setAimSectionVisible:StyxCfg.aimOn];
+    [self updateAimSection:StyxCfg.aimOn];
     [self layoutPanel];
 }
 
@@ -210,7 +210,10 @@ static const CGFloat StyxPadX         = 14.0;
     self.lblAc.frame = CGRectMake(StyxPadX, dy, StyxPanelW - StyxPadX * 2, StyxDiagH);
 }
 
-- (void)setAimSectionVisible:(BOOL)visible {
+// Named updateAimSection rather than setAimSectionVisible: the latter reads as
+// the synthesized setter for the aimSectionVisible property, which trips
+// -Wunused-property-ivar.
+- (void)updateAimSection:(BOOL)visible {
     self.aimSectionVisible = visible;
     self.lblAimCap.hidden = !visible;
     self.slAim.hidden     = !visible;
@@ -248,7 +251,7 @@ static const CGFloat StyxPadX         = 14.0;
     self.swAc.on   = StyxCfg.anogsBypassOn;
     self.slAim.value = StyxCfg.aimStrength;
     self.lblAim.text = [NSString stringWithFormat:@"%.1f", StyxCfg.aimStrength];
-    [self setAimSectionVisible:StyxCfg.aimOn];
+    [self updateAimSection:StyxCfg.aimOn];
     [self updateAcLabel];
 }
 
@@ -295,7 +298,7 @@ static const CGFloat StyxPadX         = 14.0;
 - (void)aimChanged:(UISwitch *)s  {
     StyxCfg.aimOn = s.on;
     // Reveal the strength row only while the feature is actually usable.
-    [self setAimSectionVisible:s.on];
+    [self updateAimSection:s.on];
 }
 - (void)acChanged:(UISwitch *)s    { StyxCfg.anogsBypassOn = s.on; [self updateAcLabel]; }
 
