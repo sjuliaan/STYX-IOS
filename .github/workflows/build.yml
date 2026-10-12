@@ -27,7 +27,6 @@ jobs:
       - name: Build Tweak
         run: |
           export THEOS=$HOME/theos
-          make clean
           make package FINALPACKAGE=1
 
       - name: Collect artifact
