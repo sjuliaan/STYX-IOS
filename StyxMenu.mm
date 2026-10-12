@@ -15,8 +15,23 @@
 @property (nonatomic, strong) UISwitch *swEsp, *swBox, *swDist, *swHp, *swAim, *swAc;
 @property (nonatomic, strong) UISlider *slAim;
 @property (nonatomic, strong) UILabel *lblAim;
+@property (nonatomic, strong) UILabel *lblAimCap;
 @property (nonatomic, strong) UILabel *lblAc;
+@property (nonatomic, assign) BOOL aimSectionVisible;
 @end
+
+// Panel geometry. Rows are laid out top-down from these constants and the panel
+// height is derived from the content, so nothing can overlap and adding a row
+// does not require hand-tuning magic numbers.
+static const CGFloat StyxPanelW       = 250.0;
+static const CGFloat StyxPanelTitleY  = 10.0;
+static const CGFloat StyxPanelRowsY   = 42.0;
+static const CGFloat StyxRowH         = 32.0;
+static const CGFloat StyxAimRowH      = 46.0;
+static const CGFloat StyxPanelGap     = 6.0;    // rows -> diagnostics
+static const CGFloat StyxDiagH        = 32.0;
+static const CGFloat StyxPanelPad     = 8.0;
+static const CGFloat StyxPadX         = 14.0;
 
 @implementation StyxMenuController
 
@@ -101,23 +116,22 @@
 }
 
 - (void)buildPanel {
-    CGFloat w = 250, h = 300;
-    CGFloat x = ([UIScreen mainScreen].bounds.size.width - w) / 2;
-    CGFloat y = ([UIScreen mainScreen].bounds.size.height - h) / 2;
-    self.panel = [[UIView alloc] initWithFrame:CGRectMake(x, y, w, h)];
+    CGFloat w = StyxPanelW;
+    self.panel = [[UIView alloc] initWithFrame:CGRectZero];
     self.panel.backgroundColor = [UIColor colorWithWhite:0.08f alpha:0.92f];
     self.panel.layer.cornerRadius = 14;
     self.panel.layer.borderWidth = 1;
     self.panel.layer.borderColor = [UIColor colorWithWhite:0.25f alpha:1].CGColor;
+    self.panel.clipsToBounds = YES;
 
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, w, 24)];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, StyxPanelTitleY, w, 24)];
     title.text = @"STYX";
     title.textAlignment = NSTextAlignmentCenter;
     title.textColor = [UIColor colorWithRed:0.35f green:0.85f blue:1.0f alpha:1];
     title.font = [UIFont boldSystemFontOfSize:18];
     [self.panel addSubview:title];
 
-    CGFloat ty = 44;
+    CGFloat ty = StyxPanelRowsY;
     self.swEsp  = [self switchRow:@"ESP"        y:&ty];
     self.swBox  = [self switchRow:@"Box"        y:&ty];
     self.swDist = [self switchRow:@"Distance"   y:&ty];
@@ -132,55 +146,91 @@
     [self.swAim  addTarget:self action:@selector(aimChanged:)  forControlEvents:UIControlEventValueChanged];
     [self.swAc   addTarget:self action:@selector(acChanged:)    forControlEvents:UIControlEventValueChanged];
 
-    // Aim strength slider
-    UILabel *sl = [[UILabel alloc] initWithFrame:CGRectMake(14, ty + 2, 90, 20)];
-    sl.text = @"Strength";
-    sl.textColor = [UIColor lightGrayColor];
-    sl.font = [UIFont systemFontOfSize:12];
-    [self.panel addSubview:sl];
+    // --- Aim strength row (revealed only when Aim Assist is on) --------------
+    // Label, slider and readout share one horizontal band so the slider never
+    // sits on top of a row and the value never wraps under the panel edge.
+    CGFloat ay = ty + 2;
+    self.lblAimCap = [[UILabel alloc] initWithFrame:CGRectMake(StyxPadX, ay + 6, 56, 18)];
+    self.lblAimCap.text = @"Strength";
+    self.lblAimCap.textColor = [UIColor lightGrayColor];
+    self.lblAimCap.font = [UIFont systemFontOfSize:12];
+    [self.panel addSubview:self.lblAimCap];
 
-    self.slAim = [[UISlider alloc] initWithFrame:CGRectMake(100, ty, w - 114, 24)];
+    self.slAim = [[UISlider alloc] initWithFrame:CGRectMake(StyxPadX + 58, ay, w - StyxPadX * 2 - 58 - 34, 26)];
     self.slAim.minimumValue = 1.0f;
     self.slAim.maximumValue = 20.0f;
     self.slAim.value = StyxCfg.aimStrength;
     self.slAim.continuous = YES;
-    [self.slAim addTarget:self action:@selector(aimSliderChanged:) forControlEvents:UIControlEventValueChanged];
+    [self.slAim addTarget:self action:@selector(aimSliderChanged:)
+          forControlEvents:UIControlEventValueChanged];
     [self.panel addSubview:self.slAim];
 
-    self.lblAim = [[UILabel alloc] initWithFrame:CGRectMake(14, ty + 22, w - 28, 16)];
+    self.lblAim = [[UILabel alloc] initWithFrame:CGRectMake(w - StyxPadX - 32, ay + 6, 32, 18)];
+    self.lblAim.textAlignment = NSTextAlignmentRight;
     self.lblAim.text = [NSString stringWithFormat:@"%.1f", StyxCfg.aimStrength];
     self.lblAim.textColor = [UIColor whiteColor];
     self.lblAim.font = [UIFont systemFontOfSize:11];
     [self.panel addSubview:self.lblAim];
 
-    // Live anogs diagnostics -- this is the only way to tell whether the
-    // bypass actually installed and whether it is intercepting anything.
-    self.lblAc = [[UILabel alloc] initWithFrame:CGRectMake(14, ty + 4, w - 28, 30)];
+    // --- Live anogs diagnostics ---------------------------------------------
+    // Placed after the (optional) aim row, anchored to the panel bottom.
+    self.lblAc = [[UILabel alloc] initWithFrame:CGRectZero];
     self.lblAc.textColor = [UIColor colorWithWhite:0.7f alpha:1];
     self.lblAc.font = [UIFont systemFontOfSize:10];
     self.lblAc.numberOfLines = 2;
     [self.panel addSubview:self.lblAc];
-    ty += 34;
 
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-    close.frame = CGRectMake(w - 40, 6, 32, 24);
+    close.frame = CGRectMake(w - 42, 6, 32, 24);
     [close setTitle:@"X" forState:UIControlStateNormal];
     [close addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
     [self.panel addSubview:close];
 
     [self.window addSubview:self.panel];
+
+    // Size the panel from its content. The aim row is collapsed by default
+    // because Aim Assist ships off.
+    [self setAimSectionVisible:SYXCfg.aimOn];
+    [self layoutPanel];
+}
+
+// Recomputes the panel frame from the current content height and re-centres it.
+// Called on build and whenever the aim row is shown/hidden, so the panel always
+// hugs its contents instead of relying on a hardcoded height.
+- (void)layoutPanel {
+    CGFloat h = StyxPanelRowsY + 6 * StyxRowH
+             + (self.aimSectionVisible ? StyxAimRowH : 0)
+             + StyxPanelGap + StyxDiagH + StyxPanelPad;
+
+    CGFloat x = ([UIScreen mainScreen].bounds.size.width - StyxPanelW) / 2;
+    CGFloat y = ([UIScreen mainScreen].bounds.size.height - h) / 2;
+    self.panel.frame = CGRectMake(x, y, StyxPanelW, h);
+
+    CGFloat dy = h - StyxDiagH - StyxPanelPad;
+    self.lblAc.frame = CGRectMake(StyxPadX, dy, StyxPanelW - StyxPadX * 2, StyxDiagH);
+}
+
+- (void)setAimSectionVisible:(BOOL)visible {
+    self.aimSectionVisible = visible;
+    self.lblAimCap.hidden = !visible;
+    self.slAim.hidden     = !visible;
+    self.lblAim.hidden    = !visible;
+    if (self.panel) [self layoutPanel];
 }
 
 - (UISwitch *)switchRow:(NSString *)label y:(CGFloat *)y {
-    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(196, *y, 51, 31)];
+    CGFloat w = StyxPanelW;
+    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(w - StyxPadX - 51, *y, 51, 31)];
     sw.onTintColor = [UIColor colorWithRed:0.35f green:0.85f blue:1.0f alpha:1];
-    UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(14, *y + 4, 170, 24)];
+
+    UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(StyxPadX, *y + 4, w - StyxPadX * 2 - 60, 24)];
     l.text = label;
     l.textColor = [UIColor whiteColor];
     l.font = [UIFont systemFontOfSize:14];
     [self.panel addSubview:l];
     [self.panel addSubview:sw];
-    *y += 34;
+
+    *y += StyxRowH;
     return sw;
 }
 - (void)togglePanel {
@@ -198,27 +248,30 @@
     self.swAc.on   = StyxCfg.anogsBypassOn;
     self.slAim.value = StyxCfg.aimStrength;
     self.lblAim.text = [NSString stringWithFormat:@"%.1f", StyxCfg.aimStrength];
+    [self setAimSectionVisible:SYXCfg.aimOn];
     [self updateAcLabel];
 }
 
 // Shows whether the anogs pointer table was found and how much it has
 // intercepted so far. Without this, a failed install looks identical to a
 // working one (both are just "no kick").
+//
+// Only the two live counters are shown: the old path/module counters belong to
+// interposers that were removed, and reporting zeros for them would imply
+// coverage we no longer have.
 - (void)updateAcLabel {
     if (!self.lblAc) return;
     if (!StyxAnogs.installed) {
         self.lblAc.text = @"anogs: not loaded / not hooked";
         return;
     }
-    uint64_t total = StyxAnogs.hidImages + StyxAnogs.hidPaths + StyxAnogs.hidRegions
-                   + StyxAnogs.hidThreads + StyxAnogs.neuteredSysctl
-                   + StyxAnogs.hiddenModules;
+    uint64_t total = StyxAnogs.hidImages + StyxAnogs.neuteredSysctl;
     self.lblAc.text = [NSString stringWithFormat:
-        @"anogs: %d slots hooked | %llu blocked (img %llu path %llu dbg %llu)",
+        @"anogs: %d/%d slots | %llu hits (img %llu, dbg %llu)",
         StyxAnogs.hooksApplied,
+        StyxAnogs.hooksWanted,
         (unsigned long long)total,
         (unsigned long long)StyxAnogs.hidImages,
-        (unsigned long long)StyxAnogs.hidPaths,
         (unsigned long long)StyxAnogs.neuteredSysctl];
 }
 
@@ -239,7 +292,11 @@
 - (void)boxChanged:(UISwitch *)s  { StyxCfg.espBox = s.on; }
 - (void)distChanged:(UISwitch *)s { StyxCfg.espDistance = s.on; }
 - (void)hpChanged:(UISwitch *)s    { StyxCfg.espHealth = s.on; }
-- (void)aimChanged:(UISwitch *)s  { StyxCfg.aimOn = s.on; }
+- (void)aimChanged:(UISwitch *)s  {
+    StyxCfg.aimOn = s.on;
+    // Reveal the strength row only while the feature is actually usable.
+    [self setAimSectionVisible:s.on];
+}
 - (void)acChanged:(UISwitch *)s    { StyxCfg.anogsBypassOn = s.on; [self updateAcLabel]; }
 
 @end

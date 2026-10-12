@@ -51,10 +51,13 @@ void StyxInstallAimHook(void) {
     if (g_aimHookInstalled) return;
 
     void *target = (void *)(StyxBase() + IOS_PC__GetAssitAimSpeed);
-    int rc = StyxHookFunction(target, (void *)Hooked_AssitSpeed, (void **)&g_origAssitSpeed);
+    // PC-relative form: anogs screens for the Substrate literal-jump prologue
+    // (0x58000050) by dlopen/dlsym/ldr of a resolved symbol, so we avoid
+    // emitting that byte pattern into the game binary.
+    int rc = StyxHookFunctionRel(target, (void *)Hooked_AssitSpeed, (void **)&g_origAssitSpeed);
     if (rc == 0) {
         g_aimHookInstalled = YES;
-        NSLog(@"[STYX] aim-assist amplifier installed @ %p", target);
+        NSLog(@"[STYX] aim-assist amplifier installed @ %p (PC-relative)", target);
     } else {
         NSLog(@"[STYX] aim-assist hook FAILED rc=%d @ %p", rc, target);
     }
