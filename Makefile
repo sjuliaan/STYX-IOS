@@ -4,4 +4,4 @@ TWEAK_NAME := StyxMenu
 INSTALL_TARGET_PROCESSES := codm
 SKIP_INSTALL := 1
 
-include $(THEOS)/make/tweak.mk
+include $(THEOS)/makefiles/tweak.mk
