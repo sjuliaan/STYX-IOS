@@ -1,0 +1,72 @@
+// ============================================================================
+// Minimal ARM64 inline hook — mirrors CLOUD's approach (vm_protect + patch,
+// no Substrate/Dobby/fishhook dependency).
+//
+// Overwrites 16 bytes at the target with:
+//     LDR X16, #8      ; 0x58000030
+//     BR  X16          ; 0xD61F0200
+//     .quad replacement
+//
+// A trampoline is mmap'd RWX holding the original 16 bytes followed by an
+// absolute jump back to target+16, so `orig` can be called normally.
+//
+// CONSTRAINT: the target function must be >= 16 bytes long. All hooks in this
+// project target full generated il2cpp methods, which are far longer.
+// ============================================================================
+#pragma once
+#import <mach/mach.h>
+#import <stdint.h>
+#import <string.h>
+
+static inline int StyxProtectRWX(uintptr_t addr, size_t size) {
+    kern_return_t kr = vm_protect(mach_task_self(),
+                                  (vm_address_t)addr, (vm_size_t)size, false,
+                                  VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+    return (int)kr;
+}
+
+static inline void StyxFlushICache(uintptr_t addr, size_t size) {
+    __builtin___clear_cache((char *)addr, (char *)(addr + size));
+}
+
+// Returns a fresh RWX trampoline with `size` bytes copied from target,
+// terminated by an absolute branch back to target+size.
+static inline void *StyxMakeTrampoline(void *target, size_t size) {
+    vm_size_t page = 0x1000;
+    vm_address_t tramp = 0;
+    kern_return_t kr = vm_allocate(mach_task_self(), &tramp, page,
+                                   VM_MAKE_TAG(VM_ALLOC_DEFAULT), VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+    if (kr != KERN_SUCCESS) return NULL;
+
+    memcpy((void *)tramp, target, size);
+
+    // absolute jump back: LDR X17, #8 ; BR X17 ; .quad target+size
+    uint32_t back[4] = {0x58000031u, 0xD61F0220u, 0u, 0u};
+    back[2] = (uint32_t)((uint64_t)target + size);
+    back[3] = (uint32_t)(((uint64_t)target + size) >> 32);
+    memcpy((void *)(tramp + size), back, sizeof(back));
+
+    StyxFlushICache(tramp, page);
+    return (void *)tramp;
+}
+
+static inline int StyxHookFunction(void *target, void *replacement, void **orig) {
+    if (!target || !replacement) return -1;
+
+    void *tramp = StyxMakeTrampoline(target, 16);
+    if (!tramp) return -2;
+    if (orig) *orig = tramp;
+
+    if (StyxProtectRWX((uintptr_t)target, 16) != 0) return -3;
+
+    // LDR X16, #8 ; BR X16 ; <64-bit replacement address>
+    uint32_t insn[4];
+    insn[0] = 0x58000030u;  // LDR X16, #8
+    insn[1] = 0xD61F0200u;  // BR X16
+    insn[2] = (uint32_t)((uint64_t)replacement);
+    insn[3] = (uint32_t)(((uint64_t)replacement) >> 32);
+    memcpy(target, insn, sizeof(insn));
+
+    StyxFlushICache((uintptr_t)target, 16);
+    return 0;
+}

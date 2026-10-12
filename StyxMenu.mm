@@ -1,0 +1,212 @@
+// ============================================================================
+// STYX-iOS — mod menu (UIKit overlay)
+// Floating draggable button -> panel with UISwitch rows + aim slider.
+// Non-key window so game input is never stolen.
+// ============================================================================
+#import <UIKit/UIKit.h>
+#import "StyxConfig.h"
+
+@interface StyxMenuController () <UIGestureRecognizerDelegate>
+@property (nonatomic, strong) UIWindow *window;
+@property (nonatomic, strong) UIButton *fab;
+@property (nonatomic, strong) UIView *panel;
+@property (nonatomic, strong) BOOL panelOpen;
+@property (nonatomic, strong) UISwitch *swEsp, *swBox, *swName, *swDist, *swHp, *swAim;
+@property (nonatomic, strong) UISlider *slAim;
+@property (nonatomic, strong) UILabel *lblAim;
+@end
+
+@implementation StyxMenuController
+
++ (instancetype)shared {
+    static StyxMenuController *s;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ s = [[self alloc] init]; });
+    return s;
+}
+
++ (void)show { [[self shared] showMenu]; }
++ (void)hide { [[self shared] hideMenu]; }
++ (void)toggle { [[self shared] toggleMenu]; }
+
+- (void)showMenu {
+    if (self.window) { self.window.hidden = NO; return; }
+    dispatch_async(dispatch_get_main_queue(), ^{ [self build]; });
+}
+
+- (void)hideMenu {
+    self.window.hidden = YES;
+}
+
+- (void)toggleMenu {
+    if (!self.window) { [self showMenu]; return; }
+    self.window.hidden = !self.window.hidden;
+}
+
+- (UIWindowScene *)activeScene {
+    for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
+        if ([s isKindOfClass:UIWindowScene.class] &&
+            s.activationState == UISceneActivationStateForegroundActive) {
+            return (UIWindowScene *)s;
+        }
+    }
+    return nil;
+}
+
+- (void)build {
+    UIWindowScene *scene = [self activeScene];
+    if (!scene) {
+        // Game UI not up yet; retry shortly.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ [self build]; });
+        return;
+    }
+
+    self.window = [[UIWindow alloc] initWithWindowScene:scene];
+    self.window.windowLevel = UIWindowLevelAlert + 1;   // above the ESP overlay
+    self.window.backgroundColor = UIColor.clearColor;
+    self.window.rootViewController = [[UIViewController alloc] init];
+    self.window.rootViewController.view.backgroundColor = UIColor.clearColor;
+    // Touch-transparent: touches fall through to the game except where the
+    // FAB / panel sit (those are added directly to the window, as siblings
+    // of the root view, so they are not skipped by this flag).
+    self.window.rootViewController.view.userInteractionEnabled = NO;
+    self.window.hidden = NO;
+
+    [self buildFab];
+    [self buildPanel];
+    self.panel.hidden = YES;
+    self.panelOpen = NO;
+}
+
+- (void)buildFab {
+    CGFloat s = 46;
+    self.fab = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.fab.frame = CGRectMake(20, 140, s, s);
+    self.fab.backgroundColor = [UIColor colorWithRed:0.10f green:0.10f blue:0.12f alpha:0.85f];
+    self.fab.layer.cornerRadius = s / 2;
+    self.fab.layer.borderWidth = 1.5f;
+    self.fab.layer.borderColor = [UIColor colorWithRed:0.35f green:0.85f blue:1.0f alpha:1.0f].CGColor;
+    [self.fab setTitle:@"S" forState:UIControlStateNormal];
+    [self.fab setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.fab.titleLabel.font = [UIFont boldSystemFontOfSize:20];
+    [self.fab addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
+
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragFab:)];
+    [self.fab addGestureRecognizer:pan];
+
+    [self.window addSubview:self.fab];
+}
+
+- (void)buildPanel {
+    CGFloat w = 250, h = 300;
+    CGFloat x = ([UIScreen mainScreen].bounds.size.width - w) / 2;
+    CGFloat y = ([UIScreen mainScreen].bounds.size.height - h) / 2;
+    self.panel = [[UIView alloc] initWithFrame:CGRectMake(x, y, w, h)];
+    self.panel.backgroundColor = [UIColor colorWithWhite:0.08f alpha:0.92f];
+    self.panel.layer.cornerRadius = 14;
+    self.panel.layer.borderWidth = 1;
+    self.panel.layer.borderColor = [UIColor colorWithWhite:0.25f alpha:1].CGColor;
+
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, w, 24)];
+    title.text = @"STYX";
+    title.textAlignment = NSTextAlignmentCenter;
+    title.textColor = [UIColor colorWithRed:0.35f green:0.85f blue:1.0f alpha:1];
+    title.font = [UIFont boldSystemFontOfSize:18];
+    [self.panel addSubview:title];
+
+    CGFloat ty = 44, rh = 34;
+    self.swEsp  = [self switchRow:@"ESP"        y:&ty];
+    self.swBox  = [self switchRow:@"Box"        y:&ty];
+    self.swName = [self switchRow:@"Name"       y:&ty];
+    self.swDist = [self switchRow:@"Distance"   y:&ty];
+    self.swHp   = [self switchRow:@"Health"     y:&ty];
+    self.swAim  = [self switchRow:@"Aim Assist" y:&ty];
+
+    [self.swEsp  addTarget:self action:@selector(espChanged:)  forControlEvents:UIControlEventValueChanged];
+    [self.swBox  addTarget:self action:@selector(boxChanged:)  forControlEvents:UIControlEventValueChanged];
+    [self.swName addTarget:self action:@selector(nameChanged:) forControlEvents:UIControlEventValueChanged];
+    [self.swDist addTarget:self action:@selector(distChanged:) forControlEvents:UIControlEventValueChanged];
+    [self.swHp   addTarget:self action:@selector(hpChanged:)    forControlEvents:UIControlEventValueChanged];
+    [self.swAim  addTarget:self action:@selector(aimChanged:)  forControlEvents:UIControlEventValueChanged];
+
+    // Aim strength slider
+    UILabel *sl = [[UILabel alloc] initWithFrame:CGRectMake(14, ty + 2, 90, 20)];
+    sl.text = @"Strength";
+    sl.textColor = [UIColor lightGrayColor];
+    sl.font = [UIFont systemFontOfSize:12];
+    [self.panel addSubview:sl];
+
+    self.slAim = [[UISlider alloc] initWithFrame:CGRectMake(100, ty, w - 114, 24)];
+    self.slAim.minimumValue = 1.0f;
+    self.slAim.maximumValue = 20.0f;
+    self.slAim.value = StyxCfg.aimStrength;
+    self.slAim.continuous = YES;
+    [self.slAim addTarget:self action:@selector(aimSliderChanged:) forControlEvents:UIControlEventValueChanged];
+    [self.panel addSubview:self.slAim];
+
+    self.lblAim = [[UILabel alloc] initWithFrame:CGRectMake(14, ty + 22, w - 28, 16)];
+    self.lblAim.text = [NSString stringWithFormat:@"%.1f", StyxCfg.aimStrength];
+    self.lblAim.textColor = [UIColor whiteColor];
+    self.lblAim.font = [UIFont systemFontOfSize:11];
+    [self.panel addSubview:self.lblAim];
+
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    close.frame = CGRectMake(w - 40, 6, 32, 24);
+    [close setTitle:@"X" forState:UIControlStateNormal];
+    [close addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
+    [self.panel addSubview:close];
+
+    [self.window addSubview:self.panel];
+}
+
+- (UISwitch *)switchRow:(NSString *)label y:(CGFloat *)y {
+    UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(196, *y, 51, 31)];
+    sw.onTintColor = [UIColor colorWithRed:0.35f green:0.85f blue:1.0f alpha:1];
+    UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(14, *y + 4, 170, 24)];
+    l.text = label;
+    l.textColor = [UIColor whiteColor];
+    l.font = [UIFont systemFontOfSize:14];
+    [self.panel addSubview:l];
+    [self.panel addSubview:sw];
+    *y += 34;
+    return sw;
+}
+- (void)togglePanel {
+    self.panelOpen = !self.panelOpen;
+    self.panel.hidden = !self.panelOpen;
+    if (self.panelOpen) [self syncSwitches];
+}
+
+- (void)syncSwitches {
+    self.swEsp.on  = StyxCfg.espOn;
+    self.swBox.on  = StyxCfg.espBox;
+    self.swName.on = StyxCfg.espName;
+    self.swDist.on = StyxCfg.espDistance;
+    self.swHp.on   = StyxCfg.espHealth;
+    self.swAim.on  = StyxCfg.aimOn;
+    self.slAim.value = StyxCfg.aimStrength;
+    self.lblAim.text = [NSString stringWithFormat:@"%.1f", StyxCfg.aimStrength];
+}
+
+- (void)dragFab:(UIPanGestureRecognizer *)g {
+    UIView *v = g.view;
+    CGPoint t = [g translationInView:v.superview];
+    v.center = CGPointMake(v.center.x + t.x, v.center.y + t.y);
+    [g setTranslation:CGPointZero inView:v.superview];
+}
+
+- (void)aimSliderChanged:(UISlider *)s {
+    StyxCfg.aimStrength = s.value;
+    self.lblAim.text = [NSString stringWithFormat:@"%.1f", s.value];
+}
+
+// ---- switch actions (bound in buildPanel) ----
+- (void)espChanged:(UISwitch *)s  { StyxCfg.espOn = s.on; if (s.on) StyxStartOverlay(); }
+- (void)boxChanged:(UISwitch *)s  { StyxCfg.espBox = s.on; }
+- (void)nameChanged:(UISwitch *)s { StyxCfg.espName = s.on; }
+- (void)distChanged:(UISwitch *)s { StyxCfg.espDistance = s.on; }
+- (void)hpChanged:(UISwitch *)s    { StyxCfg.espHealth = s.on; }
+- (void)aimChanged:(UISwitch *)s  { StyxCfg.aimOn = s.on; }
+
+@end
