@@ -32,7 +32,7 @@ jobs:
           export THEOS=$HOME/theos
           make all FINALPACKAGE=1
 
-      - name: Collect artifact
+      - name: Sign and collect artifact
         run: |
           mkdir -p output
           # NOTE: Theos also emits a companion debug bundle at
@@ -47,13 +47,30 @@ jobs:
           fi
           cp "$DYLIB" output/StyxMenu.dylib
           echo "Picked: $DYLIB"
-          # Assert this is a real MH_DYLIB (filetype 6), not MH_DSYM (10).
-          FT=$(python3 -c "import struct;print(struct.unpack('<I',open('output/StyxMenu.dylib','rb').read(16)[12:16])[0])")
-          echo "Mach-O filetype = $FT"
-          if [ "$FT" != "6" ]; then
-            echo "ERROR: artifact is not an MH_DYLIB (got $FT)"
-            exit 1
-          fi
+
+          # 'make all' links the tweak but does NOT codesign it, and iOS refuses
+          # to load unsigned code. Apply an ad-hoc signature (ldid).
+          ldid -S output/StyxMenu.dylib
+
+          # Assert the artifact is a real, signed MH_DYLIB:
+          #   filetype 6 == MH_DYLIB (10 would be MH_DSYM)
+          #   LC_CODE_SIGNATURE (0x1D) must be present
+          python3 - <<'PY'
+          import struct, sys
+          d = open('output/StyxMenu.dylib', 'rb').read()
+          ft = struct.unpack('<I', d[12:16])[0]
+          ncmds = struct.unpack('<I', d[16:20])[0]
+          off, signed = 32, False
+          for _ in range(ncmds):
+              cmd, sz = struct.unpack('<II', d[off:off+8])
+              if cmd == 0x1D:
+                  signed = True
+              off += sz
+          print('filetype =', ft, '(6 = MH_DYLIB)')
+          print('signed   =', signed)
+          sys.exit(0 if (ft == 6 and signed) else 1)
+          PY
+
           lipo -info output/StyxMenu.dylib
           ls -la output/
 
