@@ -35,13 +35,25 @@ jobs:
       - name: Collect artifact
         run: |
           mkdir -p output
-          DYLIB=$(find .theos -name "StyxMenu.dylib" | head -1)
+          # NOTE: Theos also emits a companion debug bundle at
+          #   .theos/obj/arm64/StyxMenu.dylib.dSYM/Contents/Resources/DWARF/StyxMenu.dylib
+          # whose inner file has the SAME name but is an MH_DSYM, not a loadable
+          # dylib. Exclude .dSYM paths or we will ship a debug symbol file.
+          DYLIB=$(find .theos/obj -type f -name "StyxMenu.dylib" -not -path "*.dSYM*" | head -1)
           if [ -z "$DYLIB" ]; then
             echo "StyxMenu.dylib not produced. Tree:"
-            find .theos -maxdepth 3 -type d
+            find .theos -maxdepth 4
             exit 1
           fi
           cp "$DYLIB" output/StyxMenu.dylib
+          echo "Picked: $DYLIB"
+          # Assert this is a real MH_DYLIB (filetype 6), not MH_DSYM (10).
+          FT=$(python3 -c "import struct;print(struct.unpack('<I',open('output/StyxMenu.dylib','rb').read(16)[12:16])[0])")
+          echo "Mach-O filetype = $FT"
+          if [ "$FT" != "6" ]; then
+            echo "ERROR: artifact is not an MH_DYLIB (got $FT)"
+            exit 1
+          fi
           lipo -info output/StyxMenu.dylib
           ls -la output/
 
