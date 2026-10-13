@@ -12,9 +12,12 @@
 // layoutSubviews is driven by UIKit itself whenever the bounds change, so this
 // survives a rotation without depending on a window-resize notification name
 // (there is no public UIWindowDidResizeNotification).
+// assign, not weak: Theos builds this file with manual reference counting,
+// which forbids synthesizing weak properties. Both views are owned by the
+// controller's window for the lifetime of the process, so they cannot dangle.
 @interface StyxMenuContainer : UIView
-@property (nonatomic, weak) UIView *content;
-@property (nonatomic, weak) UIButton *fab;
+@property (nonatomic, assign) UIView *content;
+@property (nonatomic, assign) UIButton *fab;
 @end
 
 
