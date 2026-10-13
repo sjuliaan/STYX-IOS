@@ -45,7 +45,8 @@ typedef struct {
     BOOL   visible;
 } StyxEntity;
 
-static void StyxEntityFromPawn(uintptr_t pawn, void *cam, CGPoint *headOut, CGPoint *rootOut,
+static void StyxEntityFromPawn(uintptr_t pawn, void *cam, CGSize viewSize,
+                               CGPoint *headOut, CGPoint *rootOut,
                                float *hpOut, float *maxHpOut,
                                BOOL *botOut, BOOL *aliveOut, BOOL *visOut) {
     StyxEntity e = {0};
@@ -69,9 +70,13 @@ static void StyxEntityFromPawn(uintptr_t pawn, void *cam, CGPoint *headOut, CGPo
     float hp  = *(float *)(pawn + IOS_Pawn__m_Health);
     float mx  = *(float *)(pawn + IOS_Pawn__m_MaxHealth);
     e.health = hp; e.maxHealth = mx;
-    // Unity is bottom-left origin; UIKit is top-left.
-    e.head = CGPointMake(hsc.x, [UIScreen mainScreen].bounds.size.height - hsc.y);
-    e.root = CGPointMake(rsc.x, [UIScreen mainScreen].bounds.size.height - rsc.y);
+    // Unity is bottom-left origin; UIKit is top-left. Flip against the VIEW's
+    // height, not [UIScreen mainScreen].bounds: on modern iOS the latter reports
+    // the native portrait height (844) even in landscape, which would push
+    // every box off the bottom of the screen.
+    CGFloat viewH = viewSize.height;
+    e.head = CGPointMake(hsc.x, viewH - hsc.y);
+    e.root = CGPointMake(rsc.x, viewH - rsc.y);
     e.visible = YES;
     *visOut = YES;
     if (headOut) *headOut = e.head;
@@ -101,9 +106,14 @@ static void StyxInitFnPointers(void) {
 }
 
 - (instancetype)init {
-    self = [super initWithFrame:[UIScreen mainScreen].bounds];
+    // Zero-sized on purpose: +[StyxOverlayWindow shared] sets the real frame from
+    // the window bounds. Using [UIScreen mainScreen].bounds here would bake in
+    // the native portrait size before we know the orientation.
+    self = [super initWithFrame:CGRectZero];
     self.userInteractionEnabled = NO;
     self.backgroundColor = UIColor.clearColor;
+    self.opaque = NO;
+    self.contentScaleFactor = [UIScreen mainScreen].scale;
     return self;
 }
 
@@ -134,7 +144,8 @@ static void StyxInitFnPointers(void) {
     if (!StyxPtrOK(items) || size <= 0 || size > 512) return;
 
     uintptr_t *arr = (uintptr_t *)(items + IL2CPP_ARRAY_DATA_OFF);
-    CGFloat sw = [UIScreen mainScreen].bounds.size.width;
+    // View bounds, not UIScreen.bounds -- see the note on StyxEntityFromPawn.
+    CGFloat sw = self.bounds.size.width;
 
     // Resolve the camera ONCE per frame. This used to be called twice per
     // entity inside the loop, i.e. ~40 cross-language calls per frame at 10
@@ -147,7 +158,7 @@ static void StyxInitFnPointers(void) {
         if (!StyxPtrOK(pawn)) continue;
 
         CGPoint head, root; float hp, mx; BOOL bot, alive, vis;
-        StyxEntityFromPawn(pawn, cam, &head, &root, &hp, &mx, &bot, &alive, &vis);
+        StyxEntityFromPawn(pawn, cam, self.bounds.size, &head, &root, &hp, &mx, &bot, &alive, &vis);
         if (!vis || !alive) continue;
         if (head.x < -50 || head.x > sw + 50) continue;
 
@@ -189,9 +200,9 @@ static void StyxInitFnPointers(void) {
 @end
 
 // The overlay window hosting StyxOverlayView. Created with the game's
-// UIWindowScene so it attaches properly. Its root view is clear and
-// userInteractionEnabled = NO, so touches fall through to the menu window
-// (and then to the game) — the overlay is purely visual.
+// UIWindowScene so it attaches properly. It is a StyxPassthroughWindow, so
+// touches that miss the overlay fall through to the game rather than being
+// swallowed -- the overlay is purely visual.
 @interface StyxOverlayWindow ()
 @property (nonatomic, strong) StyxOverlayView *overlayView;
 @end
@@ -217,13 +228,13 @@ static void StyxInitFnPointers(void) {
         s = [[StyxOverlayWindow alloc] initWithWindowScene:scene];
         s.windowLevel = UIWindowLevelAlert;          // below the menu window
         s.backgroundColor = UIColor.clearColor;
-        s.rootViewController = [[UIViewController alloc] init];
+        s.rootViewController = [[StyxRootViewController alloc] init];
         s.rootViewController.view.backgroundColor = UIColor.clearColor;
         s.rootViewController.view.userInteractionEnabled = NO;
         s.hidden = NO;
 
         StyxOverlayView *ov = [[StyxOverlayView alloc] init];
-        ov.frame = [UIScreen mainScreen].bounds;
+        ov.frame = s.bounds;
         ov.backgroundColor = UIColor.clearColor;
         ov.userInteractionEnabled = NO;
         [s.rootViewController.view addSubview:ov];

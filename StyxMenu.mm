@@ -79,14 +79,13 @@ static const CGFloat StyxPadX         = 14.0;
         return;
     }
 
-    self.window = [[UIWindow alloc] initWithWindowScene:scene];
+    self.window = [[StyxPassthroughWindow alloc] initWithWindowScene:scene];
     self.window.windowLevel = UIWindowLevelAlert + 1;   // above the ESP overlay
     self.window.backgroundColor = UIColor.clearColor;
-    self.window.rootViewController = [[UIViewController alloc] init];
+    self.window.rootViewController = [[StyxRootViewController alloc] init];
     self.window.rootViewController.view.backgroundColor = UIColor.clearColor;
-    // Touch-transparent: touches fall through to the game except where the
-    // FAB / panel sit (those are added directly to the window, as siblings
-    // of the root view, so they are not skipped by this flag).
+    // The root view itself ignores touches, but that alone does NOT let input
+    // reach the game -- see StyxPassthroughWindow's hitTest for why.
     self.window.rootViewController.view.userInteractionEnabled = NO;
     self.window.hidden = NO;
 
@@ -98,8 +97,15 @@ static const CGFloat StyxPadX         = 14.0;
 
 - (void)buildFab {
     CGFloat s = 46;
+    // Anchor to the WINDOW, not the screen. [UIScreen mainScreen].bounds is
+    // native-portrait (390x844) regardless of orientation, so a fixed y=140 put
+    // the button at a different relative spot in landscape than in portrait.
+    CGRect wb = (self.window ? self.window.bounds : [UIScreen mainScreen].bounds);
+    CGFloat fx = 20;
+    CGFloat fy = round(wb.size.height * 0.28f);
+
     self.fab = [UIButton buttonWithType:UIButtonTypeCustom];
-    self.fab.frame = CGRectMake(20, 140, s, s);
+    self.fab.frame = CGRectMake(fx, fy, s, s);
     self.fab.backgroundColor = [UIColor colorWithRed:0.10f green:0.10f blue:0.12f alpha:0.85f];
     self.fab.layer.cornerRadius = s / 2;
     self.fab.layer.borderWidth = 1.5f;
@@ -192,18 +198,49 @@ static const CGFloat StyxPadX         = 14.0;
     // because Aim Assist ships off.
     [self updateAimSection:StyxCfg.aimOn];
     [self layoutPanel];
+
+    // The game is landscape-only, but the window still gets resized on
+    // rotation. Re-centre the panel so it cannot end up off-screen, and keep
+    // the FAB inside the new bounds.
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(windowResized)
+                                                 name:UIWindowDidResizeNotification
+                                               object:self.window];
+}
+
+- (void)windowResized {
+    if (!self.window) return;
+    [self layoutPanel];
+
+    // Clamp the FAB back inside the window if rotation pushed it out.
+    CGRect wb = self.window.bounds;
+    CGFloat s = self.fab.bounds.size.width;
+    if (CGRectGetMaxY(self.fab.frame) > wb.size.height) {
+        self.fab.center = CGPointMake(self.fab.center.x, wb.size.height - s / 2 - 8);
+    }
+    if (CGRectGetMaxX(self.fab.frame) > wb.size.width) {
+        self.fab.center = CGPointMake(wb.size.width - s / 2 - 8, self.fab.center.y);
+    }
+    if (self.fab.center.y < s / 2 + 8) {
+        self.fab.center = CGPointMake(self.fab.center.x, s / 2 + 8);
+    }
 }
 
 // Recomputes the panel frame from the current content height and re-centres it.
 // Called on build and whenever the aim row is shown/hidden, so the panel always
 // hugs its contents instead of relying on a hardcoded height.
+//
+// Centring uses the WINDOW bounds, not [UIScreen mainScreen].bounds: the latter
+// reports native portrait (390x844) even in landscape, which placed the panel
+// roughly 195pt below the bottom edge of an 844x390 window.
 - (void)layoutPanel {
     CGFloat h = StyxPanelRowsY + 6 * StyxRowH
              + (self.aimSectionVisible ? StyxAimRowH : 0)
              + StyxPanelGap + StyxDiagH + StyxPanelPad;
 
-    CGFloat x = ([UIScreen mainScreen].bounds.size.width - StyxPanelW) / 2;
-    CGFloat y = ([UIScreen mainScreen].bounds.size.height - h) / 2;
+    CGRect wb = (self.window ? self.window.bounds : [UIScreen mainScreen].bounds);
+    CGFloat x = (wb.size.width  - StyxPanelW) / 2;
+    CGFloat y = (wb.size.height - h) / 2;
     self.panel.frame = CGRectMake(x, y, StyxPanelW, h);
 
     CGFloat dy = h - StyxDiagH - StyxPanelPad;
