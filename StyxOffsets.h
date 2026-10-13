@@ -27,12 +27,42 @@ static inline uintptr_t StyxBase(void) {
 // ---- Gameplay singletons (class is GamePlay on iOS) ----
 #define IOS_Gameplay__get_MatchGame       0x23979D4
 #define IOS_Gameplay__get_LocalPawn       0x2398AC8
+// static, zero-arg: returns the live GameEngine_PlayerController instance.
+// Verified by disassembly -- it never reads its incoming x0.
+#define IOS_Gameplay__get_LocalPC         0x2398960
 
-// ---- PlayerController: native aim assist (the amplifier target) ----
-#define IOS_PC__GetAssitAimSpeed          0x26753E4  // virtual Slot 80
-#define IOS_PC__get_AimAssistanceSpeed    0x2663D9C  // virtual Slot 45
-#define IOS_PC__CalcAssistAim             0x26691C8
+// ---- PlayerController: native aim assist ----
+//
+// IMPORTANT (verified against the 1.6.58 binary, not guessed):
+//
+// The Android mod hooks GetAssitAimSpeed and returns a bigger number. That
+// does NOT work on iOS. On iOS the assist magnitude is a plain FLOAT FIELD that
+// the game reads directly, and GetAssitAimSpeed's *return value* is not the
+// number the assist math consumes -- it has zero direct BL call sites and is
+// reached only through the vtable.
+//
+// The real path, from disassembly:
+//
+//   0x2663D9C  get_AimAssistanceSpeed      ldr s0, [x0, #0x1C8] ; ret
+//   0x2663DAC  OverrideAimAssistanceSpeed  str s8, [x19, #0x1C8]
+//   0x2663E10  ReloadInitAimAssistanceSpeed
+//                                       ldr s0,[x19,#0x1D0]
+//                                       str s0,[x19,#0x1C8]
+//   0x2665E04  (config apply)          ldr s0,[x20,#0x14]
+//                                       str s0,[x19,#0x1C8]
+//                                       str s0,[x19,#0x1D0]
+//   0x2665EA4  (consumption)           ldr s8,[x19,#0x1C8] ; str s8,[x20,#0x14]
+//
+// So: 0x1C8 is the LIVE value, 0x1D0 is the "initial" value that reload copies
+// back into 0x1C8. Writing only 0x1C8 gets clobbered on every reload, so we
+// must write BOTH.
+#define IOS_PC__GetAssitAimSpeed          0x26753E4  // virtual, vtable-dispatched
+#define IOS_PC__get_AimAssistanceSpeed    0x2663D9C
 #define IOS_PC__get_CurrentAssistAimTarget 0x26751A8
+
+// PlayerController instance fields (float).
+#define IOS_PC__m_AimAssistanceSpeed      0x1C8   // live assist speed
+#define IOS_PC__m_AimAssistanceSpeedInit  0x1D0   // reload source for 0x1C8
 
 // ---- Pawn fields (dump + disasm verified) ----
 #define IOS_Pawn__m_HeadBone              0x308

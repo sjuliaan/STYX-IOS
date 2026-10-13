@@ -40,13 +40,19 @@ static void StyxArmMod(void) {
     // 1) aim-assist amplifier (hook install is idempotent)
     StyxInstallAimHook();
 
-    // 2) anogs bypass (retry until the framework is mapped)
+    // 2) begin the periodic writer that drives the real assist-speed field.
+    // The hook above is a pass-through; this is what actually changes the
+    // assist, because iOS consumes PlayerController+0x1C8 rather than the
+    // GetAssitAimSpeed return value.
+    StyxAimStart();
+
+    // 3) anogs bypass (retry until the framework is mapped)
     StyxInstallAnogsWithRetry();
 
-    // 3) show the floating menu button
+    // 4) show the floating menu button
     [StyxMenuController show];
 
-    // 4) if ESP was left on from a previous session, start drawing
+    // 5) if ESP was left on from a previous session, start drawing
     if (StyxCfg.espOn) StyxStartOverlay();
 
     NSLog(@"[STYX] mod armed at %.1fs", STYX_INJECT_DELAY_SEC);

@@ -59,3 +59,25 @@ StyxConfig_t StyxCfg = {
 }
 
 @end
+
+// ---------------------------------------------------------------------------
+// StyxHostWindow
+//
+// Picks the game's own window: the visible, normal-level window in the active
+// scene. Its bounds follow the interface orientation, which is what we need for
+// correct positioning.
+// ---------------------------------------------------------------------------
+UIWindow *StyxHostWindow(void) {
+    for (UIScene *sc in UIApplication.sharedApplication.connectedScenes) {
+        if (![sc isKindOfClass:UIWindowScene.class]) continue;
+        if (sc.activationState != UISceneActivationStateForegroundActive) continue;
+
+        for (UIWindow *w in ((UIWindowScene *)sc).windows) {
+            if (w.hidden) continue;
+            if (w.windowLevel != UIWindowLevelNormal) continue;
+            if (!w.rootViewController) continue;
+            return w;
+        }
+    }
+    return nil;
+}

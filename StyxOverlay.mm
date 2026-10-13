@@ -26,6 +26,9 @@ static T_Camera_get_main          fnCameraMain  = NULL;
 static T_Camera_W2S               fnW2S         = NULL;
 static T_Transform_get_position   fnGetPos       = NULL;
 
+// Live counters, surfaced in the menu so "is ESP reading anything?" is visible.
+StyxEspStats_t StyxEspStats;
+
 // Small validity gate: refuse to read if the pointer looks non-canonical.
 static inline BOOL StyxPtrOK(uintptr_t p) {
     return p > 0x1000 && p < 0x7FFFFFFFFFFFULL;
@@ -130,6 +133,10 @@ static void StyxInitFnPointers(void) {
 
 - (void)drawRect:(CGRect)rect {
     if (!StyxCfg.espOn) return;
+    // Reset per-frame counters so the menu shows the CURRENT frame's numbers.
+    StyxEspStats.enemiesSeen = 0;
+    StyxEspStats.enemiesDrawn = 0;
+    StyxEspStats.frames++;
     StyxInitFnPointers();
     if (!fnMatchGame || !fnW2S) return;
 
@@ -156,6 +163,7 @@ static void StyxInitFnPointers(void) {
     for (int i = 0; i < size; i++) {
         uintptr_t pawn = arr[i];
         if (!StyxPtrOK(pawn)) continue;
+        StyxEspStats.enemiesSeen++;
 
         CGPoint head, root; float hp, mx; BOOL bot, alive, vis;
         StyxEntityFromPawn(pawn, cam, self.bounds.size, &head, &root, &hp, &mx, &bot, &alive, &vis);
@@ -164,6 +172,7 @@ static void StyxInitFnPointers(void) {
 
         CGFloat boxH = fabs(root.y - head.y);
         if (boxH < 20) continue;
+        StyxEspStats.enemiesDrawn++;
         CGFloat boxW = boxH * 0.32f;
         CGRect box = CGRectMake(head.x - boxW * 0.5f, head.y, boxW, boxH);
 
@@ -209,47 +218,76 @@ static void StyxInitFnPointers(void) {
 
 @implementation StyxOverlayWindow
 
-+ (UIWindowScene *)activeScene {
-    for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
-        if ([s isKindOfClass:UIWindowScene.class] &&
-            s.activationState == UISceneActivationStateForegroundActive) {
-            return (UIWindowScene *)s;
-        }
-    }
-    return nil;
-}
-
+// Creates the overlay, or returns nil if the game window is not ready yet.
+//
+// NOT dispatch_once. The previous version wrapped this in dispatch_once and
+// returned nil when no window was available. dispatch_once is consumed even on
+// that early return, so the singleton stayed permanently nil and ESP never drew
+// again -- no error, no retry. That is why "ESP does nothing".
+//
+// Creation is now simply retried until it succeeds.
 + (instancetype)shared {
-    static StyxOverlayWindow *s;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        UIWindowScene *scene = [self activeScene];
-        if (!scene) { s = nil; return; }
-        s = [[StyxOverlayWindow alloc] initWithWindowScene:scene];
-        s.windowLevel = UIWindowLevelAlert;          // below the menu window
-        s.backgroundColor = UIColor.clearColor;
-        s.rootViewController = [[StyxRootViewController alloc] init];
-        s.rootViewController.view.backgroundColor = UIColor.clearColor;
-        s.rootViewController.view.userInteractionEnabled = NO;
-        s.hidden = NO;
+    static StyxOverlayWindow *s = nil;
+    if (s) return s;
 
-        StyxOverlayView *ov = [[StyxOverlayView alloc] init];
-        ov.frame = s.bounds;
-        ov.backgroundColor = UIColor.clearColor;
-        ov.userInteractionEnabled = NO;
-        [s.rootViewController.view addSubview:ov];
-        s.overlayView = ov;
-    });
+    // UIKit view creation must happen on the main thread.
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ (void)[StyxOverlayWindow shared]; });
+        return nil;
+    }
+
+    // The overlay lives in the GAME's window, not one of ours: our own window
+    // has a fixed portrait-shaped coordinate space, which misplaces every
+    // coordinate. The game's window tracks the interface orientation.
+    UIWindow *host = StyxHostWindow();
+    if (!host) return nil;              // retryable: a later call can succeed
+
+    StyxOverlayWindow *w = [[StyxOverlayWindow alloc] initWithFrame:host.bounds];
+    w.backgroundColor = UIColor.clearColor;
+    w.userInteractionEnabled = NO;      // purely visual
+    w.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [host addSubview:w];
+
+    StyxOverlayView *ov = [[StyxOverlayView alloc] init];
+    ov.frame = w.bounds;
+    ov.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    ov.backgroundColor = UIColor.clearColor;
+    ov.userInteractionEnabled = NO;
+    [w addSubview:ov];
+    w.overlayView = ov;
+
+    s = w;
+    StyxEspStats.alive = YES;
+    NSLog(@"[STYX] ESP overlay created in host window (%dx%d)",
+          (int)ov.bounds.size.width, (int)ov.bounds.size.height);
     return s;
 }
 
 - (void)startDrawing {
     [_overlayView start];
+    StyxEspStats.alive = YES;
 }
 @end
 
+// Retries while the scene is unavailable, so ESP survives being switched on
+// before the game UI exists.
+static int g_espRetries = 0;
+
 void StyxStartOverlay(void) {
     StyxInitFnPointers();
+
     StyxOverlayWindow *w = [StyxOverlayWindow shared];
-    if (w) [w startDrawing];
+    if (w) {
+        [w startDrawing];
+        g_espRetries = 0;
+        return;
+    }
+
+    if (g_espRetries < 30) {
+        g_espRetries++;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ StyxStartOverlay(); });
+    } else {
+        NSLog(@"[STYX] ESP overlay never obtained a scene after %d retries", g_espRetries);
+    }
 }

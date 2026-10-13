@@ -22,7 +22,7 @@
 
 
 @interface StyxMenuController () <UIGestureRecognizerDelegate>
-@property (nonatomic, strong) UIWindow *window;
+@property (nonatomic, strong) UIWindow *hostWindow;
 @property (nonatomic, strong) StyxMenuContainer *container;
 @property (nonatomic, strong) UIButton *fab;
 @property (nonatomic, strong) UIView *panel;
@@ -32,7 +32,9 @@
 @property (nonatomic, strong) UILabel *lblAim;
 @property (nonatomic, strong) UILabel *lblAimCap;
 @property (nonatomic, strong) UILabel *lblAc;
+@property (nonatomic, strong) UILabel *lblStatus;
 @property (nonatomic, assign) BOOL aimSectionVisible;
+@property (nonatomic, strong) NSTimer *statusTimer;
 @end
 
 // Panel geometry. Rows are laid out top-down from these constants and the panel
@@ -45,6 +47,7 @@ static const CGFloat StyxRowH         = 32.0;
 static const CGFloat StyxAimRowH      = 46.0;
 static const CGFloat StyxPanelGap     = 6.0;    // rows -> diagnostics
 static const CGFloat StyxDiagH        = 32.0;
+static const CGFloat StyxStatusH      = 46.0;   // two status lines
 static const CGFloat StyxPanelPad     = 8.0;
 static const CGFloat StyxPadX         = 14.0;
 
@@ -97,18 +100,20 @@ static const CGFloat StyxPadX         = 14.0;
 + (void)hide { [[self shared] hideMenu]; }
 + (void)toggle { [[self shared] toggleMenu]; }
 
+// The menu is a container view inside the game's window now, so "hidden" means
+// the container, not a window.
 - (void)showMenu {
-    if (self.window) { self.window.hidden = NO; return; }
+    if (self.container) { self.container.hidden = NO; return; }
     dispatch_async(dispatch_get_main_queue(), ^{ [self build]; });
 }
 
 - (void)hideMenu {
-    self.window.hidden = YES;
+    self.container.hidden = YES;
 }
 
 - (void)toggleMenu {
-    if (!self.window) { [self showMenu]; return; }
-    self.window.hidden = !self.window.hidden;
+    if (!self.container) { [self showMenu]; return; }
+    self.container.hidden = !self.container.hidden;
 }
 
 - (UIWindowScene *)activeScene {
@@ -122,37 +127,33 @@ static const CGFloat StyxPadX         = 14.0;
 }
 
 - (void)build {
-    UIWindowScene *scene = [self activeScene];
-    if (!scene) {
+    // Attach to the GAME's window rather than creating our own. Our own window
+    // has a fixed, portrait-shaped coordinate space, which put the button at
+    // the wrong place and would misplace ESP. The game's window tracks the
+    // interface orientation.
+    UIWindow *host = StyxHostWindow();
+    if (!host) {
         // Game UI not up yet; retry shortly.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{ [self build]; });
         return;
     }
-
-    self.window = [[StyxPassthroughWindow alloc] initWithWindowScene:scene];
-    self.window.windowLevel = UIWindowLevelAlert + 1;   // above the ESP overlay
-    self.window.backgroundColor = UIColor.clearColor;
-    self.window.rootViewController = [[StyxRootViewController alloc] init];
-    self.window.rootViewController.view.backgroundColor = UIColor.clearColor;
-    // The root view itself ignores touches, but that alone does NOT let input
-    // reach the game -- see StyxPassthroughWindow's hitTest for why.
-    self.window.rootViewController.view.userInteractionEnabled = NO;
-    self.window.hidden = NO;
+    self.hostWindow = host;
 
     // Container owns layout: it centres the panel and keeps the FAB on-screen
     // whenever the window resizes (rotation), with no dependency on a
     // notification constant.
-    self.container = [[StyxMenuContainer alloc] initWithFrame:self.window.bounds];
+    self.container = [[StyxMenuContainer alloc] initWithFrame:host.bounds];
     self.container.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.container.backgroundColor = UIColor.clearColor;
-    [self.window addSubview:self.container];
+    [host addSubview:self.container];
 
     [self buildFab];
     [self buildPanel];
     self.panel.hidden = YES;
     self.panelOpen = NO;
     [self.container setNeedsLayout];
+    [self updateStatusLine];
 }
 
 - (void)buildFab {
@@ -160,9 +161,12 @@ static const CGFloat StyxPadX         = 14.0;
     // Anchor to the WINDOW, not the screen. [UIScreen mainScreen].bounds is
     // native-portrait (390x844) regardless of orientation, so a fixed y=140 put
     // the button at a different relative spot in landscape than in portrait.
-    CGRect wb = (self.window ? self.window.bounds : [UIScreen mainScreen].bounds);
-    CGFloat fx = 20;
-    CGFloat fy = round(wb.size.height * 0.28f);
+    // Centre of the GAME window, which is in landscape coordinates (844x390).
+    // Using our own window here gave portrait dimensions and put the button in
+    // the wrong place.
+    CGRect wb = (self.hostWindow ? self.hostWindow.bounds : [UIScreen mainScreen].bounds);
+    CGFloat fx = round((wb.size.width  - s) / 2);
+    CGFloat fy = round((wb.size.height - s) / 2);
 
     self.fab = [UIButton buttonWithType:UIButtonTypeCustom];
     self.fab.frame = CGRectMake(fx, fy, s, s);
@@ -218,14 +222,14 @@ static const CGFloat StyxPadX         = 14.0;
     // sits on top of a row and the value never wraps under the panel edge.
     CGFloat ay = ty + 2;
     self.lblAimCap = [[UILabel alloc] initWithFrame:CGRectMake(StyxPadX, ay + 6, 56, 18)];
-    self.lblAimCap.text = @"Strength";
+    self.lblAimCap.text = @"Locking";
     self.lblAimCap.textColor = [UIColor lightGrayColor];
     self.lblAimCap.font = [UIFont systemFontOfSize:12];
     [self.panel addSubview:self.lblAimCap];
 
     self.slAim = [[UISlider alloc] initWithFrame:CGRectMake(StyxPadX + 58, ay, w - StyxPadX * 2 - 58 - 34, 26)];
-    self.slAim.minimumValue = 1.0f;
-    self.slAim.maximumValue = 20.0f;
+    self.slAim.minimumValue = 0.0f;
+    self.slAim.maximumValue = 100.0f;
     self.slAim.value = StyxCfg.aimStrength;
     self.slAim.continuous = YES;
     [self.slAim addTarget:self action:@selector(aimSliderChanged:)
@@ -234,7 +238,7 @@ static const CGFloat StyxPadX         = 14.0;
 
     self.lblAim = [[UILabel alloc] initWithFrame:CGRectMake(w - StyxPadX - 32, ay + 6, 32, 18)];
     self.lblAim.textAlignment = NSTextAlignmentRight;
-    self.lblAim.text = [NSString stringWithFormat:@"%.1f", StyxCfg.aimStrength];
+    self.lblAim.text = [NSString stringWithFormat:@"%.0f", StyxCfg.aimStrength];
     self.lblAim.textColor = [UIColor whiteColor];
     self.lblAim.font = [UIFont systemFontOfSize:11];
     [self.panel addSubview:self.lblAim];
@@ -246,6 +250,14 @@ static const CGFloat StyxPadX         = 14.0;
     self.lblAc.font = [UIFont systemFontOfSize:10];
     self.lblAc.numberOfLines = 2;
     [self.panel addSubview:self.lblAc];
+
+    // Live status: aim + ESP. This is how we tell "not working" apart from
+    // "working but off-screen" without guessing.
+    self.lblStatus = [[UILabel alloc] initWithFrame:CGRectZero];
+    self.lblStatus.textColor = [UIColor colorWithRed:0.55f green:0.95f blue:0.65f alpha:1];
+    self.lblStatus.font = [UIFont systemFontOfSize:9];
+    self.lblStatus.numberOfLines = 3;
+    [self.panel addSubview:self.lblStatus];
 
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
     close.frame = CGRectMake(w - 42, 6, 32, 24);
@@ -268,12 +280,15 @@ static const CGFloat StyxPadX         = 14.0;
 - (void)layoutPanel {
     CGFloat h = StyxPanelRowsY + 6 * StyxRowH
              + (self.aimSectionVisible ? StyxAimRowH : 0)
-             + StyxPanelGap + StyxDiagH + StyxPanelPad;
+             + StyxPanelGap + StyxDiagH + StyxStatusH + StyxPanelPad;
 
     self.panel.bounds = CGRectMake(0, 0, StyxPanelW, h);
 
-    CGFloat dy = h - StyxDiagH - StyxPanelPad;
+    CGFloat dy = h - StyxDiagH - StyxStatusH - StyxPanelPad;
     self.lblAc.frame = CGRectMake(StyxPadX, dy, StyxPanelW - StyxPadX * 2, StyxDiagH);
+
+    CGFloat sy = dy + StyxDiagH;
+    self.lblStatus.frame = CGRectMake(StyxPadX, sy, StyxPanelW - StyxPadX * 2, StyxStatusH);
 }
 
 // Named updateAimSection rather than setAimSectionVisible: the latter reads as
@@ -316,9 +331,23 @@ static const CGFloat StyxPadX         = 14.0;
     self.swAim.on  = StyxCfg.aimOn;
     self.swAc.on   = StyxCfg.anogsBypassOn;
     self.slAim.value = StyxCfg.aimStrength;
-    self.lblAim.text = [NSString stringWithFormat:@"%.1f", StyxCfg.aimStrength];
+    self.lblAim.text = [NSString stringWithFormat:@"%.0f", StyxCfg.aimStrength];
     [self updateAimSection:StyxCfg.aimOn];
     [self updateAcLabel];
+
+    // Refresh the live status while the panel is open so the numbers stay
+    // current rather than freezing at the moment it opened.
+    if (self.statusTimer) return;
+    self.statusTimer = [NSTimer scheduledTimerWithTimeInterval:0.5
+                                                        target:self
+                                                      selector:@selector(statusTick)
+                                                      userInfo:nil
+                                                       repeats:YES];
+}
+
+- (void)statusTick {
+    if (!self.panelOpen) return;
+    [self updateStatusLine];
 }
 
 // Shows whether the anogs pointer table was found and how much it has
@@ -328,6 +357,40 @@ static const CGFloat StyxPadX         = 14.0;
 // Only the two live counters are shown: the old path/module counters belong to
 // interposers that were removed, and reporting zeros for them would imply
 // coverage we no longer have.
+// Live aim + ESP state. Reads the real runtime counters so the panel answers
+// "is it working?" with numbers rather than optimism.
+- (void)updateStatusLine {
+    if (!self.lblStatus) return;
+
+    NSString *aim;
+    if (!StyxAimStats.haveController) {
+        aim = @"aim: waiting for PlayerController";
+    } else if (StyxCfg.aimOn) {
+        aim = [NSString stringWithFormat:
+               @"aim: ON  %.0f -> PC+0x1C8/0x1D0 (%u writes)",
+               StyxAimStats.writtenValue, StyxAimStats.writes];
+    } else {
+        aim = [NSString stringWithFormat:
+               @"aim: idle  game=%.2f  hooked=%@",
+               StyxAimStats.originalValue,
+               StyxAimStats.hookInstalled ? @"y" : @"n"];
+    }
+
+    NSString *esp;
+    if (!StyxCfg.espOn) {
+        esp = @"esp: off";
+    } else if (!StyxEspStats.alive) {
+        esp = @"esp: overlay not created";
+    } else {
+        esp = [NSString stringWithFormat:
+               @"esp: %d seen / %d drawn  (frame %u)",
+               StyxEspStats.enemiesSeen, StyxEspStats.enemiesDrawn,
+               StyxEspStats.frames];
+    }
+
+    self.lblStatus.text = [NSString stringWithFormat:@"%@\n%@", aim, esp];
+}
+
 - (void)updateAcLabel {
     if (!self.lblAc) return;
     if (!StyxAnogs.installed) {
@@ -353,11 +416,19 @@ static const CGFloat StyxPadX         = 14.0;
 
 - (void)aimSliderChanged:(UISlider *)s {
     StyxCfg.aimStrength = s.value;
-    self.lblAim.text = [NSString stringWithFormat:@"%.1f", s.value];
+    self.lblAim.text = [NSString stringWithFormat:@"%.0f", s.value];
+    // Write the field immediately so the change is felt without waiting for the
+    // next 250ms re-assert tick.
+    StyxAimApplyNow();
+    [self updateStatusLine];
 }
 
 // ---- switch actions (bound in buildPanel) ----
-- (void)espChanged:(UISwitch *)s  { StyxCfg.espOn = s.on; if (s.on) StyxStartOverlay(); }
+- (void)espChanged:(UISwitch *)s  {
+    StyxCfg.espOn = s.on;
+    if (s.on) StyxStartOverlay();
+    [self updateStatusLine];
+}
 - (void)boxChanged:(UISwitch *)s  { StyxCfg.espBox = s.on; }
 - (void)distChanged:(UISwitch *)s { StyxCfg.espDistance = s.on; }
 - (void)hpChanged:(UISwitch *)s    { StyxCfg.espHealth = s.on; }
@@ -365,6 +436,9 @@ static const CGFloat StyxPadX         = 14.0;
     StyxCfg.aimOn = s.on;
     // Reveal the strength row only while the feature is actually usable.
     [self updateAimSection:s.on];
+    // Apply/restore the assist field immediately so the toggle is responsive.
+    StyxAimApplyNow();
+    [self updateStatusLine];
 }
 - (void)acChanged:(UISwitch *)s    { StyxCfg.anogsBypassOn = s.on; [self updateAcLabel]; }
 
