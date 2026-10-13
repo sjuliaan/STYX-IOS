@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // STYX-iOS â€” mod menu (UIKit overlay)
 // Floating draggable button -> panel with UISwitch rows + aim slider.
 // Non-key window so game input is never stolen.
@@ -7,8 +7,20 @@
 #import "StyxConfig.h"
 #import "StyxAnogs.h"
 
+// Hosts the panel and FAB and re-lays them out on every resize.
+//
+// layoutSubviews is driven by UIKit itself whenever the bounds change, so this
+// survives a rotation without depending on a window-resize notification name
+// (there is no public UIWindowDidResizeNotification).
+@interface StyxMenuContainer : UIView
+@property (nonatomic, weak) UIView *content;
+@property (nonatomic, weak) UIButton *fab;
+@end
+
+
 @interface StyxMenuController () <UIGestureRecognizerDelegate>
 @property (nonatomic, strong) UIWindow *window;
+@property (nonatomic, strong) StyxMenuContainer *container;
 @property (nonatomic, strong) UIButton *fab;
 @property (nonatomic, strong) UIView *panel;
 @property (nonatomic, assign) BOOL panelOpen;
@@ -32,6 +44,42 @@ static const CGFloat StyxPanelGap     = 6.0;    // rows -> diagnostics
 static const CGFloat StyxDiagH        = 32.0;
 static const CGFloat StyxPanelPad     = 8.0;
 static const CGFloat StyxPadX         = 14.0;
+
+@implementation StyxMenuContainer
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+
+    UIView *p = self.content;
+    if (p) {
+        CGSize s = p.bounds.size;
+        p.center = CGPointMake(CGRectGetMidX(self.bounds),
+                               round((self.bounds.size.height - s.height) / 2));
+    }
+
+    // Keep the draggable button fully on-screen after a rotation.
+    UIButton *f = self.fab;
+    if (f) {
+        CGFloat w = f.bounds.size.width;
+        CGFloat h = f.bounds.size.height;
+        CGFloat margin = 8.0;
+        CGFloat cx = MIN(MAX(f.center.x, margin + w / 2), self.bounds.size.width  - margin - w / 2);
+        CGFloat cy = MIN(MAX(f.center.y, margin + h / 2), self.bounds.size.height - margin - h / 2);
+        f.center = CGPointMake(cx, cy);
+    }
+}
+
+// Full-screen container. Returning nil for hits that miss both the panel and
+// the FAB lets the window above us ignore the touch, so the game keeps it.
+// The container itself is userInteractionEnabled == YES (it must be, to reach
+// its subviews), so without this override it would swallow everything.
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hit = [super hitTest:point withEvent:event];
+    if (hit == self || hit == nil) return nil;
+    return hit;
+}
+
+@end
 
 @implementation StyxMenuController
 
@@ -89,10 +137,19 @@ static const CGFloat StyxPadX         = 14.0;
     self.window.rootViewController.view.userInteractionEnabled = NO;
     self.window.hidden = NO;
 
+    // Container owns layout: it centres the panel and keeps the FAB on-screen
+    // whenever the window resizes (rotation), with no dependency on a
+    // notification constant.
+    self.container = [[StyxMenuContainer alloc] initWithFrame:self.window.bounds];
+    self.container.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    self.container.backgroundColor = UIColor.clearColor;
+    [self.window addSubview:self.container];
+
     [self buildFab];
     [self buildPanel];
     self.panel.hidden = YES;
     self.panelOpen = NO;
+    [self.container setNeedsLayout];
 }
 
 - (void)buildFab {
@@ -118,7 +175,8 @@ static const CGFloat StyxPadX         = 14.0;
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragFab:)];
     [self.fab addGestureRecognizer:pan];
 
-    [self.window addSubview:self.fab];
+    [self.container addSubview:self.fab];
+    self.container.fab = self.fab;
 }
 
 - (void)buildPanel {
@@ -192,56 +250,24 @@ static const CGFloat StyxPadX         = 14.0;
     [close addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
     [self.panel addSubview:close];
 
-    [self.window addSubview:self.panel];
+    [self.container addSubview:self.panel];
+    self.container.content = self.panel;
 
     // Size the panel from its content. The aim row is collapsed by default
     // because Aim Assist ships off.
     [self updateAimSection:StyxCfg.aimOn];
     [self layoutPanel];
-
-    // The game is landscape-only, but the window still gets resized on
-    // rotation. Re-centre the panel so it cannot end up off-screen, and keep
-    // the FAB inside the new bounds.
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(windowResized)
-                                                 name:UIWindowDidResizeNotification
-                                               object:self.window];
 }
 
-- (void)windowResized {
-    if (!self.window) return;
-    [self layoutPanel];
-
-    // Clamp the FAB back inside the window if rotation pushed it out.
-    CGRect wb = self.window.bounds;
-    CGFloat s = self.fab.bounds.size.width;
-    if (CGRectGetMaxY(self.fab.frame) > wb.size.height) {
-        self.fab.center = CGPointMake(self.fab.center.x, wb.size.height - s / 2 - 8);
-    }
-    if (CGRectGetMaxX(self.fab.frame) > wb.size.width) {
-        self.fab.center = CGPointMake(wb.size.width - s / 2 - 8, self.fab.center.y);
-    }
-    if (self.fab.center.y < s / 2 + 8) {
-        self.fab.center = CGPointMake(self.fab.center.x, s / 2 + 8);
-    }
-}
-
-// Recomputes the panel frame from the current content height and re-centres it.
-// Called on build and whenever the aim row is shown/hidden, so the panel always
-// hugs its contents instead of relying on a hardcoded height.
-//
-// Centring uses the WINDOW bounds, not [UIScreen mainScreen].bounds: the latter
-// reports native portrait (390x844) even in landscape, which placed the panel
-// roughly 195pt below the bottom edge of an 844x390 window.
+// Sizes the panel from its content height. The container view centres it in
+// layoutSubviews, so this only has to set the height and position the internal
+// rows -- x/y are owned by the container and re-applied on every resize.
 - (void)layoutPanel {
     CGFloat h = StyxPanelRowsY + 6 * StyxRowH
              + (self.aimSectionVisible ? StyxAimRowH : 0)
              + StyxPanelGap + StyxDiagH + StyxPanelPad;
 
-    CGRect wb = (self.window ? self.window.bounds : [UIScreen mainScreen].bounds);
-    CGFloat x = (wb.size.width  - StyxPanelW) / 2;
-    CGFloat y = (wb.size.height - h) / 2;
-    self.panel.frame = CGRectMake(x, y, StyxPanelW, h);
+    self.panel.bounds = CGRectMake(0, 0, StyxPanelW, h);
 
     CGFloat dy = h - StyxDiagH - StyxPanelPad;
     self.lblAc.frame = CGRectMake(StyxPadX, dy, StyxPanelW - StyxPadX * 2, StyxDiagH);
